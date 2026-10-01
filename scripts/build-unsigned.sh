@@ -16,11 +16,11 @@ xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" \
 cp "$ROOT/ERPStable/Info.plist" "$APP/Info.plist"
 cp "$ROOT/ERPStable/interaction.js" "$APP/interaction.js"
 cp "$ROOT/ERPStable/notifications.js" "$APP/notifications.js"
-xcrun ibtool --compile "$APP/LaunchScreen.storyboardc" "$ROOT/ERPStable/ERPStable/LaunchScreen.storyboard" \
+xcrun ibtool --compile "$APP/LaunchScreen.storyboardc" "$ROOT/ERPStable/LaunchScreen.storyboard" \
   --minimum-deployment-target 15.0 --target-device iphone --target-device ipad
 for entry in '120 AppIcon60x60@2x.png' '180 AppIcon60x60@3x.png' '152 AppIcon76x76@2x.png' '167 AppIcon83.5x83.5@2x.png'; do
   read -r size name <<< "$entry"
-  sips -z "$size" "$size" "$ROOT/ERPStable/ERPStable/site-icon.png" --out "$APP/$name" >/dev/null
+  sips -z "$size" "$size" "$ROOT/ERPStable/site-icon.png" --out "$APP/$name" >/dev/null
 done
 plutil -convert binary1 "$APP/Info.plist"
 rm -f "$OUT/ERPStable-unsigned.ipa"
