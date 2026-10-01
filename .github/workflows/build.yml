@@ -1,0 +1,33 @@
+name: Build unsigned iOS IPA
+on:
+  push:
+    branches: [erp-stable-ios]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build arm64 device application
+        run: bash scripts/build-unsigned.sh
+      - name: Verify unsigned device binary
+        run: |
+          file build/Payload/ERPStable.app/ERPStable
+          lipo -verify_arch arm64 build/Payload/ERPStable.app/ERPStable
+          if codesign -dv build/Payload/ERPStable.app 2>/dev/null; then
+            echo 'Unexpected code signature' >&2
+            exit 1
+          fi
+          unzip -t build/ERPStable-unsigned.ipa
+          shasum -a 256 build/ERPStable-unsigned.ipa > build/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ERPStable-unsigned
+          path: |
+            build/ERPStable-unsigned.ipa
+            build/SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
