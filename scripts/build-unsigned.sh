@@ -16,6 +16,7 @@ xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" \
 cp "$ROOT/ERPStable/Info.plist" "$APP/Info.plist"
 cp "$ROOT/ERPStable/interaction.js" "$APP/interaction.js"
 cp "$ROOT/ERPStable/notifications.js" "$APP/notifications.js"
+cp "$ROOT/ERPStable/keyboard.js" "$APP/keyboard.js"
 xcrun ibtool --compile "$APP/LaunchScreen.storyboardc" "$ROOT/ERPStable/LaunchScreen.storyboard" \
   --minimum-deployment-target 15.0 --target-device iphone --target-device ipad
 for entry in '120 AppIcon60x60@2x.png' '180 AppIcon60x60@3x.png' '152 AppIcon76x76@2x.png' '167 AppIcon83.5x83.5@2x.png'; do

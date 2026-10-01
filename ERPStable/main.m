@@ -6,14 +6,6 @@
 // Only the focused responder inside this web view is changed. Keep WebKit's
 // existing input, selection, autofill and keyboard implementations intact.
 static id ERPNoAccessory(id object, SEL selector) { return nil; }
-static UIView *ERPFirstResponder(UIView *view) {
-    if (view.isFirstResponder) return view;
-    for (UIView *child in view.subviews) {
-        UIView *found = ERPFirstResponder(child);
-        if (found) return found;
-    }
-    return nil;
-}
 static void ERPRemoveAccessory(UIView *responder) {
     if (!responder) return;
     responder.inputAssistantItem.leadingBarButtonGroups = @[];
@@ -29,13 +21,25 @@ static void ERPRemoveAccessory(UIView *responder) {
         objc_registerClassPair(replacement);
     }
     object_setClass(responder, replacement);
-    [responder reloadInputViews];
+    // Install before editing starts. Reloading while the keyboard is appearing
+    // changes its frame mid-transition and can leave WebKit's viewport stale.
+}
+static void ERPPrepareTextInputs(UIView *view) {
+    if ([view conformsToProtocol:@protocol(UITextInput)] ||
+        [NSStringFromClass(object_getClass(view)) containsString:@"WKContentView"]) {
+        ERPRemoveAccessory(view);
+    }
+    for (UIView *child in view.subviews) ERPPrepareTextInputs(child);
 }
 
 @interface BrowserController : UIViewController <WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, UNUserNotificationCenterDelegate>
 @property(nonatomic, strong) WKWebView *web;
 @property(nonatomic) BOOL askedForNotifications;
 @property(nonatomic) UIStatusBarStyle statusBarStyle;
+@property(nonatomic, strong) NSLayoutConstraint *webBottomConstraint;
+@property(nonatomic) BOOL keyboardVisible;
+@property(nonatomic) CGSize lastViewportSize;
+@property(nonatomic) BOOL lastViewportKeyboardVisible;
 @end
 
 @implementation BrowserController
@@ -56,6 +60,10 @@ static void ERPRemoveAccessory(UIView *responder) {
     NSAssert(notificationScript != nil, @"Missing notifications.js");
     [configuration.userContentController addUserScript:[[WKUserScript alloc]
         initWithSource:notificationScript injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    NSString *keyboardScript = [NSString stringWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"keyboard" withExtension:@"js"] encoding:NSUTF8StringEncoding error:nil];
+    NSAssert(keyboardScript != nil, @"Missing keyboard.js");
+    [configuration.userContentController addUserScript:[[WKUserScript alloc]
+        initWithSource:keyboardScript injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
     self.web = [[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration];
     self.web.navigationDelegate = self;
     self.web.UIDelegate = self;
@@ -67,20 +75,55 @@ static void ERPRemoveAccessory(UIView *responder) {
     self.web.inputAssistantItem.trailingBarButtonGroups = @[];
     self.web.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.web];
+    self.webBottomConstraint = [self.web.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor];
     [NSLayoutConstraint activateConstraints:@[
         [self.web.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
-        [self.web.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        self.webBottomConstraint,
         [self.web.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [self.web.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor]]];
-    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(keyboardWillShow:)
-        name:UIKeyboardWillShowNotification object:nil];
+    ERPPrepareTextInputs(self.web);
+    for (NSNotificationName name in @[UIKeyboardWillChangeFrameNotification, UIKeyboardDidChangeFrameNotification, UIKeyboardWillHideNotification]) {
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(keyboardFrameChanged:) name:name object:nil];
+    }
     UNUserNotificationCenter.currentNotificationCenter.delegate = self;
     [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://erp.sex/"]]];
 }
 - (BOOL)prefersStatusBarHidden { return NO; }
 - (UIStatusBarStyle)preferredStatusBarStyle { return self.statusBarStyle; }
-- (void)keyboardWillShow:(NSNotification *)notification {
-    ERPRemoveAccessory(ERPFirstResponder(self.web));
+- (void)keyboardFrameChanged:(NSNotification *)notification {
+    UIWindow *window = self.view.window;
+    if (!window) return;
+    CGRect screenFrame = [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    CGRect keyboardFrame = [self.view convertRect:screenFrame fromCoordinateSpace:window.screen.coordinateSpace];
+    CGRect overlap = CGRectIntersection(self.view.bounds, keyboardFrame);
+    BOOL docked = !CGRectIsNull(overlap) && CGRectGetHeight(overlap) > 0 &&
+        CGRectGetMaxY(keyboardFrame) >= CGRectGetMaxY(self.view.bounds) - 1 &&
+        CGRectGetWidth(overlap) >= CGRectGetWidth(self.view.bounds) * 0.5;
+    CGFloat height = docked ? CGRectGetMaxY(self.view.bounds) - CGRectGetMinY(overlap) : 0;
+    if ([notification.name isEqualToString:UIKeyboardWillHideNotification]) height = 0;
+    self.keyboardVisible = height > 0;
+    self.webBottomConstraint.constant = -height;
+    NSTimeInterval duration = [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    UIViewAnimationOptions curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] integerValue] << 16;
+    [UIView animateWithDuration:duration delay:0 options:curve | UIViewAnimationOptionBeginFromCurrentState
+        animations:^{ [self.view layoutIfNeeded]; }
+        completion:^(BOOL finished) { [self syncViewport:YES]; }];
+}
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    [self syncViewport:NO];
+}
+- (void)syncViewport:(BOOL)force {
+    CGSize size = self.web.bounds.size;
+    if (size.width <= 0 || size.height <= 0) return;
+    if (!force && CGSizeEqualToSize(size, self.lastViewportSize) &&
+        self.lastViewportKeyboardVisible == self.keyboardVisible) return;
+    self.lastViewportSize = size;
+    self.lastViewportKeyboardVisible = self.keyboardVisible;
+    NSString *script = [NSString stringWithFormat:
+        @"window.__vrcrpSetViewport?.({width:%.2f,height:%.2f,keyboardVisible:%@})",
+        size.width, size.height, self.keyboardVisible ? @"true" : @"false"];
+    [self.web evaluateJavaScript:script completionHandler:nil];
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
@@ -124,7 +167,7 @@ static void ERPRemoveAccessory(UIView *responder) {
         dispatch_async(dispatch_get_main_queue(), ^{ UIApplication.sharedApplication.applicationIconBadgeNumber = count.integerValue; });
         if (![body[@"notify"] isEqual:@YES]) return;
         UNMutableNotificationContent *content = [UNMutableNotificationContent new];
-        content.title = @"聊";
+        content.title = @"vrcrp";
         content.body = @"你有新的聊天消息";
         content.sound = UNNotificationSound.defaultSound;
         content.badge = count;
@@ -147,6 +190,12 @@ static void ERPRemoveAccessory(UIView *responder) {
 }
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
     webView.scrollView.pinchGestureRecognizer.enabled = NO;
+    ERPPrepareTextInputs(webView);
+    [self syncViewport:YES];
+}
+- (void)webView:(WKWebView *)webView didCommitNavigation:(WKNavigation *)navigation {
+    ERPPrepareTextInputs(webView);
+    [self syncViewport:YES];
 }
 - (void)showError:(NSError *)error {
     if (error.code == NSURLErrorCancelled) return;
@@ -168,13 +217,13 @@ static void ERPRemoveAccessory(UIView *responder) {
 }
 - (void)webView:(WKWebView *)webView runJavaScriptAlertPanelWithMessage:(NSString *)message
     initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(void))completionHandler {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"聊" message:message preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"vrcrp" message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { completionHandler(); }]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)webView:(WKWebView *)webView runJavaScriptConfirmPanelWithMessage:(NSString *)message
     initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(BOOL))completionHandler {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"聊" message:message preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"vrcrp" message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) { completionHandler(NO); }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) { completionHandler(YES); }]];
     [self presentViewController:alert animated:YES completion:nil];

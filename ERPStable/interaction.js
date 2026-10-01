@@ -6,6 +6,11 @@
     body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
     .app-top { padding-top: max(0.75rem, env(safe-area-inset-top)) !important; }
     .app-bottom { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+    .h-dvh, .h-screen { height: var(--vrcrp-viewport-height, 100dvh) !important; }
+    .min-h-screen { min-height: var(--vrcrp-viewport-height, 100dvh) !important; }
+    html[data-vrcrp-chat="true"], html[data-vrcrp-chat="true"] body {
+      height: var(--vrcrp-viewport-height, 100dvh); overflow: hidden;
+    }
     * { -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }
     input, textarea, [contenteditable]:not([contenteditable="false"]),
     input *, textarea *, [contenteditable]:not([contenteditable="false"]) * {
