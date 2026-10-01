@@ -11,7 +11,7 @@ APP="$OUT/Payload/ERPStable.app"
 mkdir -p "$APP"
 xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" \
   -miphoneos-version-min=15.0 -fobjc-arc -O2 \
-  -framework UIKit -framework Foundation -framework WebKit \
+  -framework UIKit -framework Foundation -framework WebKit -framework CoreGraphics \
   -Wl,-no_adhoc_codesign "$ROOT/ERPStable/main.m" -o "$APP/ERPStable"
 cp "$ROOT/ERPStable/Info.plist" "$APP/Info.plist"
 cp "$ROOT/ERPStable/interaction.js" "$APP/interaction.js"
