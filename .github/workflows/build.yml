@@ -16,7 +16,7 @@ jobs:
       - name: Verify unsigned device binary
         run: |
           file build/Payload/ERPStable.app/ERPStable
-          lipo -verify_arch arm64 build/Payload/ERPStable.app/ERPStable
+          lipo build/Payload/ERPStable.app/ERPStable -verify_arch arm64
           if codesign -dv build/Payload/ERPStable.app 2>/dev/null; then
             echo 'Unexpected code signature' >&2
             exit 1
