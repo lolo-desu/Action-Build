@@ -11,6 +11,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Check unread notification handling
+        run: node scripts/test-notifications.cjs
       - name: Build arm64 device application
         run: bash scripts/build-unsigned.sh
       - name: Verify unsigned device binary
@@ -22,6 +24,9 @@ jobs:
             exit 1
           fi
           unzip -t build/ERPStable-unsigned.ipa
+          test -d build/Payload/ERPStable.app/LaunchScreen.storyboardc
+          test -f build/Payload/ERPStable.app/AppIcon60x60@3x.png
+          plutil -extract CFBundleDisplayName raw build/Payload/ERPStable.app/Info.plist
           shasum -a 256 build/ERPStable-unsigned.ipa > build/SHA256.txt
       - uses: actions/upload-artifact@v4
         with:

@@ -3,6 +3,9 @@
   const viewportValue = 'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
   const css = `
     html, body { touch-action: manipulation; }
+    body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+    .app-top { padding-top: max(0.75rem, env(safe-area-inset-top)) !important; }
+    .app-bottom { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
     * { -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }
     input, textarea, [contenteditable]:not([contenteditable="false"]),
     input *, textarea *, [contenteditable]:not([contenteditable="false"]) * {
@@ -13,6 +16,7 @@
     }
   `;
   let queued = false;
+  let lastThemeColor = null;
   function apply() {
     queued = false;
     if (!document.head) return;
@@ -31,6 +35,12 @@
     }
     if (style.textContent !== css) style.textContent = css;
     document.querySelectorAll('[autofocus]').forEach(el => el.removeAttribute('autofocus'));
+    const color = document.querySelector('meta[name="theme-color"]')?.content;
+    if (window === window.top && location.origin === 'https://erp.sex' &&
+        /^#[0-9a-f]{6}$/i.test(color ?? '') && color !== lastThemeColor) {
+      lastThemeColor = color;
+      window.webkit?.messageHandlers?.erpNativeNotifications?.postMessage({ kind: 'appearance', color });
+    }
   }
   new MutationObserver(() => {
     if (!queued) { queued = true; queueMicrotask(apply); }
