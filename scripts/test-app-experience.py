@@ -29,6 +29,10 @@ with sync_playwright() as p:
     assert page.locator('.app-bottom').get_attribute('aria-hidden')=='true'
     assert page.locator('.app-bottom').evaluate('e=>getComputedStyle(e).opacity')=='0'
     assert baseline.evaluate(metrics)==page.evaluate(metrics),'native acknowledgement altered layout'
+    page.evaluate("""window.originalHitTest=document.elementFromPoint.bind(document);
+    document.elementFromPoint=()=>null;window.dispatchEvent(new Event('resize'))""")
+    page.wait_for_timeout(100)
+    assert page.evaluate("nativeMessages.filter(m=>m.kind==='navigation').at(-1).visible"),'a stale keyboard viewport hid native navigation'
     page.evaluate('__vrcrpActivateTab(3)')
     page.wait_for_function("location.pathname==='/posts'&&nativeMessages.filter(m=>m.kind==='navigation').at(-1).items[3].selected")
     assert page.evaluate('__fixtureClicks')==1,'native tab did not use the original click handler exactly once'
@@ -39,6 +43,11 @@ with sync_playwright() as p:
     page.evaluate("const modal=document.createElement('div');modal.id='test-modal';modal.setAttribute('role','dialog');modal.style='position:fixed;inset:0;z-index:999;background:white';document.body.appendChild(modal)")
     page.wait_for_function("nativeMessages.filter(m=>m.kind==='navigation').at(-1).visible===false")
     page.evaluate("document.getElementById('test-modal').remove()")
+    page.wait_for_function("nativeMessages.filter(m=>m.kind==='navigation').at(-1).visible===true")
+    page.evaluate("void(document.elementFromPoint=originalHitTest)")
+    page.evaluate("const backdrop=document.createElement('div');backdrop.id='test-backdrop';backdrop.style='position:fixed;inset:0;z-index:101;background:rgba(0,0,0,.2)';document.body.appendChild(backdrop)")
+    page.wait_for_function("nativeMessages.filter(m=>m.kind==='navigation').at(-1).visible===false")
+    page.evaluate("document.getElementById('test-backdrop').remove()")
     page.wait_for_function("nativeMessages.filter(m=>m.kind==='navigation').at(-1).visible===true")
     page.evaluate("__vrcrpActivateTab(0)")
     page.wait_for_function("location.pathname==='/discover'&&!nativeMessages.filter(m=>m.kind==='route').at(-1).canGoBack")

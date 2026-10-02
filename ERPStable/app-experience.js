@@ -38,6 +38,31 @@
     const r = element.getBoundingClientRect();
     return { x: r.x - (relative?.x ?? 0), y: r.y - (relative?.y ?? 0), width: r.width, height: r.height };
   }
+  function navigationBlocked(nav, rect) {
+    const height = parseFloat(document.documentElement.style.getPropertyValue('--vrcrp-viewport-height')) || innerHeight;
+    const rendered = element => {
+      const bounds = element.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0 || bounds.bottom <= 0 || bounds.top >= height) return false;
+      for (let node = element; node instanceof Element; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+      }
+      return true;
+    };
+    // WebKit can keep the CSS viewport at its pre-keyboard height briefly.
+    // A hidden source nav can therefore be outside hit testing even though the
+    // native nav is correctly placed. Only an actual overlay should hide it.
+    if ([...document.querySelectorAll('[data-dialog],[role="dialog"],dialog[open]')].some(rendered)) return true;
+    const y = Math.min(rect.y + Math.min(15, rect.height / 2), height - 15);
+    const hit = document.elementFromPoint(rect.x + rect.width / 2, Math.max(0, y));
+    if (!hit || nav.contains(hit)) return false;
+    const navLayer = parseInt(getComputedStyle(nav).zIndex) || 0;
+    for (let node = hit; node && node !== document.body; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.position === 'fixed' && (parseInt(style.zIndex) || 0) > navLayer && rendered(node)) return true;
+    }
+    return false;
+  }
   const icons = new Map();
   function rasterIcon(svg, color) {
     let source = svg.outerHTML.replace(/currentColor/g, color);
@@ -101,9 +126,8 @@
     let model = { kind: 'navigation', visible: false };
     if (nav && anchors.length === 5 && getComputedStyle(nav).display !== 'none' && nav.getBoundingClientRect().width > 0) {
       const rect = nav.getBoundingClientRect();
-      const top = document.elementFromPoint(rect.x + rect.width / 2, rect.y + Math.min(15, rect.height / 2));
       // Native views must not cover a site's modal, menu backdrop or lightbox.
-      const visible = !!top && nav.contains(top);
+      const visible = getComputedStyle(nav).visibility !== 'hidden' && !navigationBlocked(nav, rect);
       const navStyle = getComputedStyle(nav);
       const items = await Promise.all(anchors.map(async (a, slot) => {
         const style = getComputedStyle(a), svg = a.querySelector('svg');
