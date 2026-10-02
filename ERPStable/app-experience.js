@@ -299,6 +299,7 @@
     if (fingerprint !== navFingerprint) { navFingerprint = fingerprint; post(model); }
   }
   function schedule() { if (!queued) { queued = true; requestAnimationFrame(update); } }
+  window.__vrcrpRefreshChrome=()=>{updateTopSurface();schedule();};
   window.__vrcrpNativeNavReady = () => {
     const nav = document.querySelector('.app-bottom');
     if (nav) {

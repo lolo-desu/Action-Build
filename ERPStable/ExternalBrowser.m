@@ -89,7 +89,7 @@
     UIAlertController *alert=[UIAlertController alertControllerWithTitle:self.hostLabel.text message:message preferredStyle:UIAlertControllerStyleAlert];[alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a){done(YES);}]];[alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a){done(NO);}]];[self presentViewController:alert animated:YES completion:nil];
 }
 #if ERP_TESTING
-- (NSDictionary *)verifyState { return @{@"host":self.hostLabel.text?:@"",@"url":self.web.URL.absoluteString?:@"",@"back":@(self.backButton.enabled),@"forward":@(self.forwardButton.enabled),@"close":@(!self.closeButton.hidden),@"barBottom":@(CGRectGetMaxY(self.bar.frame)),@"webTop":@(self.web.frame.origin.y),@"statusVisible":@(!self.prefersStatusBarHidden)}; }
+- (NSDictionary *)verifyState { return @{@"host":self.hostLabel.text?:@"",@"url":self.web.URL.absoluteString?:@"",@"back":@(self.backButton.enabled),@"forward":@(self.forwardButton.enabled),@"loading":@(self.web.loading),@"title":self.web.title?:@"",@"close":@(!self.closeButton.hidden),@"barBottom":@(CGRectGetMaxY(self.bar.frame)),@"webTop":@(self.web.frame.origin.y),@"statusVisible":@(!self.prefersStatusBarHidden)}; }
 - (void)verifyOpenNext { [self.web evaluateJavaScript:@"document.querySelector('a').click()" completionHandler:nil]; }
 #endif
 @end

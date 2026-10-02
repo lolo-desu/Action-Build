@@ -66,6 +66,7 @@
     }
   }
   function schedule(){if(!queued){queued=true;requestAnimationFrame(update);}}
+  window.__vrcrpRefreshSurface=update;
   window.__vrcrpCloseProfileOverlay=()=>{const close=overlay?.querySelector('.sticky button');if(!close)return false;close.click();return true;};
   window.__vrcrpPageBack=()=>{
     if(overlay)return window.__vrcrpCloseProfileOverlay();
