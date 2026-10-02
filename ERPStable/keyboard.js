@@ -3,13 +3,32 @@
   if (location.origin !== 'https://erp.sex') return;
   let viewport = null;
   let scheduled = false;
+  function installStyle() {
+    if (!document.head || document.getElementById('vrcrp-keyboard-layout')) return;
+    const style = document.createElement('style');
+    style.id = 'vrcrp-keyboard-layout';
+    // The site's chat already uses a full-height flex layout. Supply only its
+    // actual native viewport height, without restyling headers, tabs or editors.
+    style.textContent = `
+      html[data-vrcrp-chat="true"][data-vrcrp-viewport="true"] .h-dvh {
+        height: var(--vrcrp-viewport-height) !important;
+      }
+      html[data-vrcrp-chat="true"][data-vrcrp-viewport="true"],
+      html[data-vrcrp-chat="true"][data-vrcrp-viewport="true"] body {
+        height: var(--vrcrp-viewport-height); overflow: hidden;
+      }
+    `;
+    document.head.appendChild(style);
+  }
   function update() {
     scheduled = false;
     const root = document.documentElement;
     if (!root) return;
+    installStyle();
     const chat = /^\/matches\/[^/]+\/?$/.test(location.pathname);
     if (root.dataset.vrcrpChat !== String(chat)) root.dataset.vrcrpChat = String(chat);
     if (!viewport) return;
+    root.dataset.vrcrpViewport = 'true';
     const value = `${viewport.height}px`;
     if (root.style.getPropertyValue('--vrcrp-viewport-height') !== value) root.style.setProperty('--vrcrp-viewport-height', value);
     if (root.dataset.vrcrpKeyboard !== String(viewport.keyboardVisible)) root.dataset.vrcrpKeyboard = String(viewport.keyboardVisible);

@@ -19,7 +19,7 @@ main{display:flex;flex-direction:column;flex:1;min-height:0;padding:16px 12px 76
 .chat-header{height:50px;flex-shrink:0}
 .messages{flex:1;min-height:0;overflow:auto;border:1px solid}
 .composer{flex-shrink:0;display:flex;padding:12px;border:1px solid}
-textarea{flex:1;min-width:0;height:44px} .local-note{font-size:11px;flex-shrink:0}
+textarea{flex:1;min-width:0;height:44px;font-size:14px} .local-note{font-size:11px;flex-shrink:0}
 .app-bottom{position:fixed;left:0;right:0;bottom:0;height:64px;border-top:1px solid}
 </style></head><body><div class="shell h-dvh"><header class="app-top">Site navigation</header>
 <main id="main"><section class="chat"><header class="chat-header">Chat</header>
@@ -35,6 +35,18 @@ with sync_playwright() as p:
     page.route("https://erp.sex/**", lambda route: route.fulfill(body=fixture, content_type="text/html"))
     page.goto("https://erp.sex/matches/test")
     page.evaluate("window.__vrcrpSetViewport({width:393,height:793,keyboardVisible:false})")
+    page.wait_for_function("document.documentElement.dataset.vrcrpViewport === 'true'")
+    # Native patches must not change the site's fonts, paddings or button layout.
+    baseline = browser.new_page(viewport={"width":393,"height":793},is_mobile=True,has_touch=True)
+    baseline.route("https://erp.sex/**",lambda route:route.fulfill(body=fixture,content_type="text/html"))
+    baseline.goto("https://erp.sex/matches/test")
+    measure = """() => ['.app-top','.app-bottom','textarea','button','.composer','main'].map(s => {
+        const e=document.querySelector(s),r=e.getBoundingClientRect(),c=getComputedStyle(e);
+        return [s,r.x,r.y,r.width,r.height,c.fontSize,c.padding,c.borderRadius,c.backgroundColor];
+    })"""
+    assert baseline.evaluate(measure) == page.evaluate(measure), "website appearance changed"
+    assert page.locator('textarea').evaluate("e => getComputedStyle(e).userSelect") == 'text'
+    baseline.close()
     page.locator("textarea").focus()
     for height in [434, 793, 402, 440, 793, 434]:
         page.set_viewport_size({"width": 393, "height": height})
@@ -61,5 +73,6 @@ with sync_playwright() as p:
     page.evaluate("history.pushState({},'', '/settings'); document.body.appendChild(document.createElement('div'))")
     page.wait_for_function("document.documentElement.dataset.vrcrpChat === 'false'")
     assert page.locator("body").evaluate("el => getComputedStyle(el).overflow") != "hidden"
+    assert page.locator('.h-dvh').evaluate("e => e.getBoundingClientRect().height") == 793, "non-chat layout must retain its original height rules"
     browser.close()
-print("PASS: first keyboard presentation, hide/reopen, height changes, multiline composer, stale dvh, invalid viewport and leaving chat")
+print("PASS: original fonts/layout, first keyboard presentation, hide/reopen, height changes, multiline composer, stale dvh, invalid viewport and unchanged non-chat layout")

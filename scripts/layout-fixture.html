@@ -1,0 +1,21 @@
+<!doctype html><html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#ecf1f8">
+<style>
+*{box-sizing:border-box}html,body{margin:0;background:#ecf1f8;color:#273349;font:14px system-ui}
+.h-dvh{height:100dvh}.shell{display:flex;flex-direction:column;overflow:hidden}
+.app-top{height:56px;flex-shrink:0;padding:16px;border-bottom:1px solid #cbd5e1}
+main{display:flex;flex:1;min-height:0;flex-direction:column;padding:20px 12px calc(72px + env(safe-area-inset-bottom))}
+.chat{display:flex;flex:1;min-height:0;flex-direction:column;gap:12px}
+.chat-header{height:48px;flex-shrink:0}.messages{flex:1;min-height:0;overflow:auto;background:white;border-radius:16px;padding:16px}
+.composer{display:flex;gap:8px;flex-shrink:0;padding:12px;background:white;border-radius:16px}
+textarea{font:14px system-ui;flex:1;min-width:0;height:44px;border:1px solid #cbd5e1;border-radius:10px;padding:10px}
+button{font:14px system-ui;padding:8px;border:0;border-radius:10px;background:#dce9ff}
+.note{font-size:11px;flex-shrink:0}.app-bottom{position:fixed;bottom:0;inset-inline:0;padding:12px 4px calc(12px + env(safe-area-inset-bottom));background:white;border-top:1px solid #cbd5e1;display:flex;justify-content:space-around}
+</style></head><body>
+<div class="shell h-dvh"><header class="app-top">网站布局验证</header><main><section class="chat">
+<header class="chat-header">聊天</header><div class="messages">虚构测试消息，用于检查键盘首次弹出和再次弹出。</div>
+<form class="composer"><textarea placeholder="消息"></textarea><button type="button">发送</button></form>
+<div class="note">本页面只在模拟器测试构建中使用。</div>
+</section></main></div><nav class="app-bottom"><span>探索</span><span>喜欢</span><span>配对</span><span>广场</span><span>我的</span></nav>
+</body></html>

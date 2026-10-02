@@ -31,6 +31,16 @@ static void ERPPrepareTextInputs(UIView *view) {
     }
     for (UIView *child in view.subviews) ERPPrepareTextInputs(child);
 }
+#if ERP_TESTING
+static UIView *ERPFocusedView(UIView *view) {
+    if (view.isFirstResponder) return view;
+    for (UIView *child in view.subviews) {
+        UIView *focused = ERPFocusedView(child);
+        if (focused) return focused;
+    }
+    return nil;
+}
+#endif
 
 @interface BrowserController : UIViewController <WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, UNUserNotificationCenterDelegate>
 @property(nonatomic, strong) WKWebView *web;
@@ -67,10 +77,13 @@ static void ERPPrepareTextInputs(UIView *view) {
     self.web = [[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration];
     self.web.navigationDelegate = self;
     self.web.UIDelegate = self;
-    self.web.allowsBackForwardNavigationGestures = YES;
+    // Website cards use horizontal drags. Native history gestures must not
+    // compete with the site's own pointer handlers and animations.
+    self.web.allowsBackForwardNavigationGestures = NO;
+    self.web.allowsLinkPreview = NO;
     self.web.scrollView.pinchGestureRecognizer.enabled = NO;
     self.web.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
-    self.web.scrollView.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
+    self.web.scrollView.keyboardDismissMode = UIScrollViewKeyboardDismissModeNone;
     self.web.inputAssistantItem.leadingBarButtonGroups = @[];
     self.web.inputAssistantItem.trailingBarButtonGroups = @[];
     self.web.translatesAutoresizingMaskIntoConstraints = NO;
@@ -86,6 +99,15 @@ static void ERPPrepareTextInputs(UIView *view) {
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(keyboardFrameChanged:) name:name object:nil];
     }
     UNUserNotificationCenter.currentNotificationCenter.delegate = self;
+#if ERP_TESTING
+    NSArray *arguments = NSProcessInfo.processInfo.arguments;
+    if ([arguments containsObject:@"--verify-keyboard"]) {
+        NSString *fixture = [NSString stringWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"layout-fixture" withExtension:@"html"] encoding:NSUTF8StringEncoding error:nil];
+        [self.web loadHTMLString:fixture baseURL:[NSURL URLWithString:@"https://erp.sex/matches/layout-fixture"]];
+    } else if ([arguments containsObject:@"--preview-login"]) {
+        [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://erp.sex/login"]]];
+    } else
+#endif
     [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://erp.sex/"]]];
 }
 - (BOOL)prefersStatusBarHidden { return NO; }
@@ -127,6 +149,10 @@ static void ERPPrepareTextInputs(UIView *view) {
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
+#if ERP_TESTING
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"] ||
+        [NSProcessInfo.processInfo.arguments containsObject:@"--preview-login"]) return;
+#endif
     if (self.askedForNotifications || [NSUserDefaults.standardUserDefaults boolForKey:@"ERPNotificationPromptShown"]) return;
     self.askedForNotifications = YES;
     [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"ERPNotificationPromptShown"];
@@ -192,7 +218,39 @@ static void ERPPrepareTextInputs(UIView *view) {
     webView.scrollView.pinchGestureRecognizer.enabled = NO;
     ERPPrepareTextInputs(webView);
     [self syncViewport:YES];
+#if ERP_TESTING
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            [self.web evaluateJavaScript:@"document.querySelector('textarea').focus()" completionHandler:nil];
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [self captureLayout:@"first"]; });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            [self.web evaluateJavaScript:@"document.activeElement.blur()" completionHandler:nil];
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            [self.web evaluateJavaScript:@"document.querySelector('textarea').focus()" completionHandler:nil];
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 7 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [self captureLayout:@"reopened"]; });
+    }
+#endif
 }
+#if ERP_TESTING
+- (void)captureLayout:(NSString *)phase {
+    NSString *script = @"(() => {const e=document.querySelector('textarea'); const r=e.getBoundingClientRect();return {inputTop:r.top,inputBottom:r.bottom,visualHeight:visualViewport.height,scale:visualViewport.scale,windowHeight:innerHeight,chatHeight:document.querySelector('.h-dvh').getBoundingClientRect().height,editing:document.activeElement===e,href:location.href};})()";
+    [self.web evaluateJavaScript:script completionHandler:^(id result, NSError *error) {
+        NSMutableDictionary *data = [result isKindOfClass:NSDictionary.class] ? [result mutableCopy] : [NSMutableDictionary new];
+        data[@"nativeHeight"] = @(self.web.bounds.size.height);
+        data[@"keyboardVisible"] = @(self.keyboardVisible);
+        data[@"keyboardHeight"] = @(-self.webBottomConstraint.constant);
+        UIView *focused = ERPFocusedView(self.web);
+        data[@"accessoryRemoved"] = @(focused && focused.inputAccessoryView == nil);
+        if (error) data[@"error"] = error.localizedDescription;
+        NSURL *directory = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+        NSData *json = [NSJSONSerialization dataWithJSONObject:data options:NSJSONWritingPrettyPrinted error:nil];
+        [json writeToURL:[directory URLByAppendingPathComponent:[NSString stringWithFormat:@"layout-%@.json", phase]] atomically:YES];
+    }];
+}
+#endif
 - (void)webView:(WKWebView *)webView didCommitNavigation:(WKNavigation *)navigation {
     ERPPrepareTextInputs(webView);
     [self syncViewport:YES];

@@ -1,14 +1,14 @@
-name: Build unsigned iOS IPA
+name: Build vrcrp website iOS IPA
 on:
   push:
-    branches: [erp-stable-ios]
+    branches: [vrcrp-web-ios]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   build:
-    runs-on: macos-14
-    timeout-minutes: 15
+    runs-on: macos-26
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Check unread notification handling
@@ -28,11 +28,17 @@ jobs:
           test -f build/Payload/ERPStable.app/AppIcon60x60@3x.png
           plutil -extract CFBundleDisplayName raw build/Payload/ERPStable.app/Info.plist
           shasum -a 256 build/ERPStable-unsigned.ipa > build/SHA256.txt
+      - name: Check WebKit keyboard in iOS Simulator
+        run: bash scripts/simulator-check.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: ERPStable-unsigned
+          name: vrcrp-web-unsigned
           path: |
             build/ERPStable-unsigned.ipa
             build/SHA256.txt
+            build/layout-first.json
+            build/layout-reopened.json
+            build/web-keyboard.png
+            build/web-login.png
           if-no-files-found: error
           retention-days: 30
