@@ -12,7 +12,21 @@ xcrun --sdk iphonesimulator clang -arch "$ARCH" -isysroot "$SDK" \
   "$ROOT/ERPStable/main.m" "$ROOT/ERPStable/ThemeNavigation.m" "$ROOT/ERPStable/ChatNotifications.m" -o "$APP/ERPStable"
 cp "$ROOT/scripts/layout-fixture.html" "$APP/layout-fixture.html"
 cp "$ROOT/scripts/navigation-fixture.html" "$APP/navigation-fixture.html"
+python3 - "$APP/Info.plist" <<'PY'
+import plistlib,sys
+from pathlib import Path
+p=Path(sys.argv[1]); info=plistlib.loads(p.read_bytes())
+info['NSAppTransportSecurity']={'NSAllowsLocalNetworking':True}
+p.write_bytes(plistlib.dumps(info,fmt=plistlib.FMT_BINARY))
+PY
 codesign --force --sign - "$APP"
+python3 "$ROOT/scripts/fixture-server.py" > "$ROOT/build/fixture-server.log" 2>&1 &
+FIXTURE_SERVER_PID=$!
+for attempt in {1..20}; do
+  if curl --fail --silent http://127.0.0.1:18765/health >/dev/null; then break; fi
+  sleep 1
+done
+curl --fail --silent http://127.0.0.1:18765/health >/dev/null
 SIM_ID="$(python3 - <<'PY'
 import json,subprocess
 runtimes=json.loads(subprocess.check_output(['xcrun','simctl','list','runtimes','--json']))['runtimes']
@@ -22,7 +36,7 @@ phone=next(d for d in devices if d['name']=='iPhone 17 Pro')
 print(subprocess.check_output(['xcrun','simctl','create','vrcrp-web-check',phone['identifier'],runtime['identifier']],text=True).strip())
 PY
 )"
-trap 'xcrun simctl shutdown "$SIM_ID" >/dev/null 2>&1 || true' EXIT
+trap 'kill "$FIXTURE_SERVER_PID" >/dev/null 2>&1 || true; xcrun simctl shutdown "$SIM_ID" >/dev/null 2>&1 || true' EXIT
 xcrun simctl boot "$SIM_ID"
 xcrun simctl bootstatus "$SIM_ID" -b
 xcrun simctl install "$SIM_ID" "$APP"

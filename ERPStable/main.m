@@ -6,6 +6,21 @@
 #import "ThemeNavigation.h"
 #import "ChatNotifications.h"
 
+static BOOL ERPUsesSimulatorFixtures(void) {
+#if ERP_TESTING
+    NSArray *args=NSProcessInfo.processInfo.arguments;
+    return [args containsObject:@"--verify-keyboard"] || [args containsObject:@"--verify-tabs"] || [args containsObject:@"--verify-ux"];
+#else
+    return NO;
+#endif
+}
+static NSString *ERPInjectedScript(NSString *script) {
+#if ERP_TESTING
+    if(ERPUsesSimulatorFixtures())return [script stringByReplacingOccurrencesOfString:@"https://erp.sex" withString:@"http://127.0.0.1:18765"];
+#endif
+    return script;
+}
+
 // Only the focused responder inside this web view is changed. Keep WebKit's
 // existing input, selection, autofill and keyboard implementations intact.
 static id ERPNoAccessory(id object, SEL selector) { return nil; }
@@ -90,18 +105,18 @@ static UIView *ERPFocusedView(UIView *view) {
     NSString *script = [NSString stringWithContentsOfURL:scriptURL encoding:NSUTF8StringEncoding error:nil];
     NSAssert(script != nil, @"Missing interaction.js");
     [configuration.userContentController addUserScript:[[WKUserScript alloc]
-        initWithSource:script injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:NO]];
+        initWithSource:ERPInjectedScript(script) injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:NO]];
     NSString *notificationScript = [NSString stringWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"notifications" withExtension:@"js"] encoding:NSUTF8StringEncoding error:nil];
     NSAssert(notificationScript != nil, @"Missing notifications.js");
     [configuration.userContentController addUserScript:[[WKUserScript alloc]
-        initWithSource:notificationScript injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+        initWithSource:ERPInjectedScript(notificationScript) injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
     NSString *keyboardScript = [NSString stringWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"keyboard" withExtension:@"js"] encoding:NSUTF8StringEncoding error:nil];
     NSAssert(keyboardScript != nil, @"Missing keyboard.js");
     [configuration.userContentController addUserScript:[[WKUserScript alloc]
-        initWithSource:keyboardScript injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+        initWithSource:ERPInjectedScript(keyboardScript) injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
     NSString *appScript=[NSString stringWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"app-experience" withExtension:@"js"] encoding:NSUTF8StringEncoding error:nil];
     NSAssert(appScript!=nil,@"Missing app-experience.js");
-    [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:appScript injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:ERPInjectedScript(appScript) injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
     self.web = [[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration];
     self.web.navigationDelegate = self;
     self.web.UIDelegate = self;
@@ -161,12 +176,10 @@ static UIView *ERPFocusedView(UIView *view) {
 #if ERP_TESTING
     NSArray *arguments = NSProcessInfo.processInfo.arguments;
     if ([arguments containsObject:@"--verify-keyboard"] || [arguments containsObject:@"--verify-tabs"]) {
-        NSString *fixture = [NSString stringWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"layout-fixture" withExtension:@"html"] encoding:NSUTF8StringEncoding error:nil];
-        NSString *path=[arguments containsObject:@"--verify-tabs"]?@"https://erp.sex/discover":@"https://erp.sex/matches/layout-fixture";
-        [self.web loadHTMLString:fixture baseURL:[NSURL URLWithString:path]];
+        NSString *path=[arguments containsObject:@"--verify-tabs"]?@"http://127.0.0.1:18765/discover?fixture=layout":@"http://127.0.0.1:18765/matches/layout-fixture?fixture=layout";
+        [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:path]]];
     } else if ([arguments containsObject:@"--verify-ux"]) {
-        NSString *fixture=[NSString stringWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"navigation-fixture" withExtension:@"html"] encoding:NSUTF8StringEncoding error:nil];
-        [self.web loadHTMLString:fixture baseURL:[NSURL URLWithString:@"https://erp.sex/discover"]];
+        [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:18765/discover"]]];
     } else if ([arguments containsObject:@"--preview-login"]) {
         [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://erp.sex/login"]]];
     } else
@@ -331,8 +344,11 @@ static UIView *ERPFocusedView(UIView *view) {
     [self.web evaluateJavaScript:[NSString stringWithFormat:@"window.__vrcrpOpenChat?.(%@[0])",argument] completionHandler:nil];
 }
 - (void)userContentController:(WKUserContentController *)controller didReceiveScriptMessage:(WKScriptMessage *)message {
-    if (!message.frameInfo.isMainFrame || ![message.frameInfo.securityOrigin.host isEqualToString:@"erp.sex"] ||
-        ![message.frameInfo.securityOrigin.protocol isEqualToString:@"https"] ||
+    BOOL trusted=[message.frameInfo.securityOrigin.host isEqualToString:@"erp.sex"] && [message.frameInfo.securityOrigin.protocol isEqualToString:@"https"];
+#if ERP_TESTING
+    if(ERPUsesSimulatorFixtures() && [message.frameInfo.securityOrigin.host isEqualToString:@"127.0.0.1"] && [message.frameInfo.securityOrigin.protocol isEqualToString:@"http"] && message.frameInfo.securityOrigin.port==18765)trusted=YES;
+#endif
+    if (!message.frameInfo.isMainFrame || !trusted ||
         ![message.body isKindOfClass:NSDictionary.class]) return;
     NSDictionary *body = message.body;
     if ([message.name isEqualToString:@"erpNativeApp"]) {
@@ -476,7 +492,7 @@ static UIView *ERPFocusedView(UIView *view) {
 }
 #if ERP_TESTING
 - (void)captureUX:(NSString *)phase {
-    NSString *script=@"(() => {const t=document.querySelector('textarea');return {path:location.pathname,webNavVisibility:getComputedStyle(document.querySelector('.app-bottom')).visibility,headerColor:getComputedStyle(document.querySelector('.app-top')).backgroundColor,inputBottom:t?t.getBoundingClientRect().bottom:null,actions:[...document.querySelectorAll('.act')].map(b=>{const r=b.getBoundingClientRect();return {width:r.width,height:r.height,bottom:r.bottom}})};})()";
+    NSString *script=@"(() => {const t=document.querySelector('textarea');return {path:location.pathname,historyLength:history.length,historyIndex:history.state?.idx,webNavVisibility:getComputedStyle(document.querySelector('.app-bottom')).visibility,headerColor:getComputedStyle(document.querySelector('.app-top')).backgroundColor,inputBottom:t?t.getBoundingClientRect().bottom:null,actions:[...document.querySelectorAll('.act')].map(b=>{const r=b.getBoundingClientRect();return {width:r.width,height:r.height,bottom:r.bottom}})};})()";
     [self.web evaluateJavaScript:script completionHandler:^(id result,NSError *error){
         NSMutableDictionary *data=[result isKindOfClass:NSDictionary.class]?[result mutableCopy]:[NSMutableDictionary new];
         data[@"nativeNavVisible"]=@(!self.bottomNav.hidden); data[@"navTop"]=@(self.bottomNav.frame.origin.y-self.web.frame.origin.y);
