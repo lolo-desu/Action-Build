@@ -504,25 +504,7 @@ static UIView *ERPFocusedView(UIView *view) {
         });
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 7 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [self captureLayout:@"reopened"]; });
     }
-    if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-tabs"]) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{
-            [self.bottomNav.buttons[3] sendActionsForControlEvents:UIControlEventTouchUpInside];
-            NSMutableArray *selected=[NSMutableArray new];
-            for(UIButton *button in self.bottomNav.buttons)if(button.accessibilityTraits&UIAccessibilityTraitSelected)[selected addObject:@(button.tag)];
-            NSDictionary *data=@{@"selectedImmediately":selected};
-            NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
-            [[NSJSONSerialization dataWithJSONObject:data options:0 error:nil] writeToURL:[directory URLByAppendingPathComponent:@"tabs-immediate.json"] atomically:YES];
-        });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC),dispatch_get_main_queue(),^{ [self captureTabs:@"tabs"]; });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,4*NSEC_PER_SEC),dispatch_get_main_queue(),^{
-            [self.web evaluateJavaScript:@"const modal=document.createElement('div');modal.id='test-modal';modal.setAttribute('role','dialog');modal.style='position:fixed;inset:0;z-index:999;background:white';document.body.appendChild(modal)" completionHandler:nil];
-        });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC),dispatch_get_main_queue(),^{ [self captureTabs:@"modal"]; });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,6*NSEC_PER_SEC),dispatch_get_main_queue(),^{
-            [self.web evaluateJavaScript:@"document.getElementById('test-modal').remove()" completionHandler:nil];
-        });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,7*NSEC_PER_SEC),dispatch_get_main_queue(),^{ [self captureTabs:@"restored"]; });
-    }
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-tabs"]) [self verifyTabsWhenReady:0];
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-ux"]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC),dispatch_get_main_queue(),^{[self captureUX:@"discover"];});
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,4*NSEC_PER_SEC),dispatch_get_main_queue(),^{[self.web evaluateJavaScript:@"__fixtureOpen('/matches/thread')" completionHandler:nil];});
@@ -554,6 +536,28 @@ static UIView *ERPFocusedView(UIView *view) {
 #endif
 }
 #if ERP_TESTING
+// A cold simulator can finish its document before SVG rasterization supplies
+// the native navigation model. Begin the tap test only once it is actionable;
+// the selected state is still checked synchronously, before any JS reply.
+- (void)verifyTabsWhenReady:(NSUInteger)attempt {
+    BOOL ready=!self.bottomNav.hidden && self.bottomNav.bounds.size.width>100 && self.bottomNav.buttons.lastObject.accessibilityLabel.length>0;
+    if(!ready && attempt<100) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),dispatch_get_main_queue(),^{[self verifyTabsWhenReady:attempt+1];});return;
+    }
+    [self.bottomNav.buttons[3] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    NSMutableArray *selected=[NSMutableArray new];
+    for(UIButton *button in self.bottomNav.buttons)if(button.accessibilityTraits&UIAccessibilityTraitSelected)[selected addObject:@(button.tag)];
+    NSDictionary *data=@{@"selectedImmediately":selected,@"nativeReady":@(ready)};
+    NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    [[NSJSONSerialization dataWithJSONObject:data options:0 error:nil] writeToURL:[directory URLByAppendingPathComponent:@"tabs-immediate.json"] atomically:YES];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{[self captureTabs:@"tabs"];});
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+        [self.web evaluateJavaScript:@"const modal=document.createElement('div');modal.id='test-modal';modal.setAttribute('role','dialog');modal.style='position:fixed;inset:0;z-index:999;background:white';document.body.appendChild(modal)" completionHandler:nil];
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,4*NSEC_PER_SEC),dispatch_get_main_queue(),^{[self captureTabs:@"modal"];});
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC),dispatch_get_main_queue(),^{[self.web evaluateJavaScript:@"document.getElementById('test-modal').remove()" completionHandler:nil];});
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,6*NSEC_PER_SEC),dispatch_get_main_queue(),^{[self captureTabs:@"restored"];});
+}
 - (void)captureMotion:(NSString *)phase {
     NSMutableDictionary *data=[@{@"currentKey":self.pageNavigation.currentKey?:@"",@"previewKey":self.pageNavigation.previewKey?:NSNull.null,@"progress":@(self.pageNavigation.progress),@"transitioning":@(self.pageNavigation.transitioning),@"interactive":@(self.pageNavigation.interactive),@"canPreviewParent":@(self.pageNavigation.canPreviewParent),@"webTranslation":@(self.web.transform.tx),@"webWidth":@(self.web.bounds.size.width),@"webAlpha":@(self.web.alpha),@"documentLoads":@(self.documentLoads),@"nativeNavVisible":@(!self.bottomNav.hidden)} mutableCopy];
     [self.web evaluateJavaScript:@"({path:location.pathname,index:history.state?.idx,draft:document.querySelector('textarea')?.value || ''})" completionHandler:^(id result,NSError *error){
