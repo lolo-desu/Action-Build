@@ -1,0 +1,34 @@
+name: Build vrcrp native iOS
+on:
+  push:
+    branches: [vrcrp-native-ios]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check decoding and message updates
+        run: |
+          swiftc Sources/Domain.swift scripts/CoreTests.swift -o /tmp/vrcrp-core-tests
+          /tmp/vrcrp-core-tests
+      - name: Build native arm64 application
+        run: bash scripts/build.sh
+      - name: Verify unsigned IPA
+        run: |
+          file build/Payload/vrcrp.app/vrcrp
+          lipo build/Payload/vrcrp.app/vrcrp -verify_arch arm64
+          if codesign -dv build/Payload/vrcrp.app 2>/dev/null; then exit 1; fi
+          unzip -t build/vrcrp-native-unsigned.ipa
+          shasum -a 256 build/vrcrp-native-unsigned.ipa > build/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vrcrp-native-unsigned
+          path: |
+            build/vrcrp-native-unsigned.ipa
+            build/SHA256.txt
+          retention-days: 30
+          if-no-files-found: error
