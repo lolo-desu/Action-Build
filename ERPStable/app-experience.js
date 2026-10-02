@@ -19,9 +19,6 @@
     html[data-vrcrp-explore-grid="true"] .app-bottom a[href="/discover"] { color: rgb(var(--primary)) !important; font-weight: 600 !important; }
     [data-vrcrp-swipe-group="true"] { max-width: min(100%, var(--vrcrp-swipe-width)) !important; }
     [data-vrcrp-swipe-actions="true"] > * { flex-shrink: 0 !important; }
-    @keyframes vrcrp-page-arrive { from { opacity: .72; transform: translateY(5px); } to { opacity: 1; transform: none; } }
-    #main.vrcrp-page-arrive { animation: vrcrp-page-arrive 180ms cubic-bezier(.2,.7,.2,1); }
-    @media (prefers-reduced-motion: reduce) { #main.vrcrp-page-arrive { animation: none; } }
   `;
   function post(value) { try { bridge.postMessage(value); } catch {} }
   function rgba(value) {
@@ -133,19 +130,55 @@
   let routePending = false;
   let lastPath = location.pathname;
   let entries = [location.pathname + location.search];
+  let entryKeys = [history.state?.key || 'vr-initial'];
+  const views = new Map();
+  const pathViews = new Map();
   let index = 0;
+  let direction = 'none', pendingRestore = null, settleGeneration = 0;
   let baseIndex = Number.isInteger(history.state?.idx) ? history.state.idx : 0;
-  function route() {
-    post({ kind: 'route', path: location.pathname, showTabs: tabPages.has(location.pathname), canGoBack: index > 0 && !roots.has(location.pathname), refreshable: refreshable.has(location.pathname) });
-    if (location.pathname === '/matches') window.__vrcrpSyncChats?.();
+  const entryKey = () => String(entryKeys[index] || 'vr-' + index);
+  function saveView() {
+    const main = document.getElementById('main'); if (!main) return;
+    const chat = /^\/matches\/[^/]+$/.test(lastPath), editor = chat ? main.querySelector('textarea') : null;
+    const state = { x:scrollX,y:scrollY,scrollers:[...main.querySelectorAll('.overflow-y-auto,.messages')].map(e=>({top:e.scrollTop,bottom:e.scrollHeight-e.scrollTop-e.clientHeight<80})),draft:editor?.value?.slice(0,8000) || '' };
+    views.delete(entryKey()); views.set(entryKey(),state); if(views.size>10)views.delete(views.keys().next().value);
+    pathViews.delete(lastPath);pathViews.set(lastPath,state);if(pathViews.size>10)pathViews.delete(pathViews.keys().next().value);
   }
-  function arrive() {
-    const main = document.getElementById('main');
-    if (!main || matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.dataset.vrcrpReduceMotion === 'true') return;
-    if (document.activeElement?.matches('input,textarea,[contenteditable="true"]')) return;
-    if (getComputedStyle(main).animationName !== 'none') return;
-    main.classList.add('vrcrp-page-arrive');
-    setTimeout(() => main.classList.remove('vrcrp-page-arrive'), 220);
+  function willNavigate(path, motion) {
+    saveView();
+    post({kind:'willNavigate',entryKey:entryKey(),toPath:path,direction:motion});
+  }
+  function settle() {
+    const owner = ++settleGeneration, key = entryKey(), saved = pendingRestore;
+    const started = performance.now();
+    function attempt() {
+      if(owner!==settleGeneration || key!==entryKey())return;
+      const main=document.getElementById('main'), chat=/^\/matches\/[^/]+$/.test(location.pathname);
+      const editor=chat?main?.querySelector('textarea'):null;
+      const usable=main && (chat ? editor || main.querySelector('.card button,[role="alert"]') : main.children.length);
+      const scrolls=main?[...main.querySelectorAll('.overflow-y-auto,.messages')]:[];
+      const pendingHeight=saved?.scrollers?.some((s,i)=>s.top>0 && scrolls[i] && scrolls[i].scrollHeight-scrolls[i].clientHeight<s.top-1);
+      if ((!usable || pendingHeight) && performance.now()-started<1400){setTimeout(attempt,35);return;}
+      if(saved && main) {
+        window.scrollTo(saved.x,saved.y);
+        for(let i=0;i<scrolls.length;i++)if(saved.scrollers[i]){
+          scrolls[i].scrollTop=saved.scrollers[i].bottom?scrolls[i].scrollHeight:saved.scrollers[i].top;
+          scrolls[i].dispatchEvent(new Event('scroll'));
+        }
+        if(editor && saved.draft && !editor.value){
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,saved.draft);
+          editor.dispatchEvent(new Event('input',{bubbles:true}));
+        }
+      }
+      pendingRestore=null;
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{if(owner===settleGeneration)post({kind:'routeSettled',entryKey:key,path:location.pathname});}));
+    }
+    attempt();
+  }
+  function route() {
+    post({ kind: 'route', path: location.pathname, entryKey:entryKey(),parentKey:index>0?String(entryKeys[index-1]):null,direction,showTabs: tabPages.has(location.pathname), canGoBack: index > 0 && !roots.has(location.pathname), refreshable: refreshable.has(location.pathname) });
+    if (location.pathname === '/matches') window.__vrcrpSyncChats?.();
+    settle(); direction='none';
   }
   async function update() {
     queued = false;
@@ -163,7 +196,6 @@
     }
     if (routePending) {
       routePending = false; route();
-      if (lastPath !== location.pathname) arrive();
       lastPath = location.pathname;
     }
     if (location.pathname === '/settings/notifications' && !document.getElementById('vrcrp-system-notifications')) {
@@ -215,7 +247,8 @@
       if (currentGeneration !== generation || nav !== document.querySelector('.app-bottom')) return;
       let background = rgba(navStyle.backgroundColor);
       if (background[3] < .05) background = rgba(getComputedStyle(document.body).backgroundColor);
-      model = { kind: 'navigation', visible, overlay, frame: box(nav), bottomPadding: parseFloat(navStyle.paddingBottom) || 0, background, borderColor: rgba(navStyle.borderTopColor), borderWidth: parseFloat(navStyle.borderTopWidth) || 0, items };
+      const theme=getComputedStyle(root);
+      model = { kind: 'navigation', visible, overlay, frame: box(nav), bottomPadding: parseFloat(navStyle.paddingBottom) || 0, background, borderColor: rgba(navStyle.borderTopColor), borderWidth: parseFloat(navStyle.borderTopWidth) || 0, selectedColor:rgba('rgb('+theme.getPropertyValue('--primary').trim()+')'),mutedColor:items.find(i=>!i.selected)?.color || [0.45,0.5,0.6,1], items };
     }
     const fingerprint = JSON.stringify(model);
     if (fingerprint !== navFingerprint) { navFingerprint = fingerprint; post(model); }
@@ -245,9 +278,12 @@
         window.scrollTo({ top: 0, behavior: document.documentElement.dataset.vrcrpReduceMotion === 'true' || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
         if (location.pathname === '/matches') window.__vrcrpSyncChats?.();
       } else anchor.click();
+      return true;
     }
+    return false;
   };
-  window.__vrcrpBack = () => { if (index > 0 && !roots.has(location.pathname)) history.back(); };
+  window.__vrcrpBack = () => { if (index > 0 && !roots.has(location.pathname)) { saveView(); history.back();return true; } return false; };
+  window.__vrcrpClearNavigation = () => { views.clear();pathViews.clear(); pendingRestore=null; };
   window.__vrcrpOpenMatches = () => {
     const link = document.querySelector('.app-bottom a[href="/matches"]');
     if (link) link.click(); else location.assign('/matches');
@@ -265,18 +301,30 @@
   for (const method of ['pushState', 'replaceState']) {
     const original = history[method];
     history[method] = function (...args) {
+      let nextPath;try{nextPath=new URL(args[2] || location.href,location.href).pathname;}catch{nextPath=location.pathname;}
+      const changed=nextPath!==location.pathname;
+      if(changed) {
+        direction=roots.has(nextPath)?(roots.has(location.pathname)?'tab':'pop'):'push';
+        willNavigate(nextPath,direction);
+      }
       const result = Reflect.apply(original, this, args);
       const path = location.pathname + location.search;
-      if (method === 'pushState') { entries.splice(index + 1); entries.push(path); index++; }
-      else { entries[index] = path; if (index === 0 && Number.isInteger(history.state?.idx)) baseIndex = history.state.idx; }
+      if (method === 'pushState') { entries.splice(index + 1);entryKeys.splice(index+1); entries.push(path);entryKeys.push(history.state?.key || 'vr-'+Math.random().toString(36).slice(2)); index++; }
+      else { entries[index] = path;entryKeys[index]=history.state?.key || entryKeys[index]; if (index === 0 && Number.isInteger(history.state?.idx)) baseIndex = history.state.idx; }
+      if(changed)pendingRestore=views.get(entryKey()) || pathViews.get(location.pathname) || null;
       routePending = true; schedule();
       return result;
     };
   }
-  window.addEventListener('popstate', () => {
+  window.addEventListener('popstate', event => {
     const path = location.pathname + location.search;
+    if(!event.isTrusted && entries[index]===path && Number.isInteger(history.state?.idx) && history.state.idx-baseIndex===index)return;
+    const oldIndex=index;
+    saveView();
     const target = Number.isInteger(history.state?.idx) ? history.state.idx - baseIndex : -1;
     index = target >= 0 && target < entries.length && entries[target] === path ? target : Math.max(0, entries.lastIndexOf(path));
+    direction=index<oldIndex?'pop':index>oldIndex?'push':'none';
+    pendingRestore=views.get(entryKey()) || null;
     routePending = true; schedule();
   });
   document.addEventListener('click', event => {
@@ -285,6 +333,10 @@
     const control = el?.closest('button,[role="button"],.app-bottom a');
     if (control && !control.matches(':disabled,[aria-disabled="true"]')) post({ kind: 'haptic', style: control.closest('.app-bottom') ? 'selection' : 'light' });
   }, { passive: true, capture: true });
+  document.addEventListener('pointerdown',event=>{
+    const a=event.target.closest?.('a[href]');if(!a)return;
+    try{const url=new URL(a.href,location.href);if(url.origin===location.origin&&url.pathname!==location.pathname&&!roots.has(url.pathname))post({kind:'willNavigate',entryKey:entryKey(),toPath:url.pathname,direction:'push'});}catch{}
+  },{passive:true,capture:true});
   // Observe successful operations without reading request/response bodies or
   // changing the site's promises, errors, animation timing or event handlers.
   const originalFetch = window.fetch;
@@ -302,6 +354,10 @@
   }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true, attributeFilter: ['class', 'style', 'aria-current', 'open', 'data-preset', 'data-theme', 'data-vrcrp-keyboard'] });
   window.addEventListener('resize', schedule);
   window.addEventListener('scroll', schedule, { passive: true });
+  let snapshotTimer;
+  const snapshotSoon=()=>{clearTimeout(snapshotTimer);snapshotTimer=setTimeout(()=>post({kind:'viewUpdated',entryKey:entryKey()}),160);};
+  window.addEventListener('scroll',snapshotSoon,{passive:true,capture:true});
+  new MutationObserver(records=>{if(records.some(r=>r.target.closest?.('#main') && (r.type!=='attributes' || r.attributeName==='aria-current')))snapshotSoon();}).observe(document,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['aria-current']});
   document.addEventListener('focusin', schedule);
   routePending = true; schedule();
 })();

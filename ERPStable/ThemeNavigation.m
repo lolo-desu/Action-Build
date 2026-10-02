@@ -30,6 +30,8 @@ CGRect VRRect(id value) {
 @property(nonatomic, strong) NSArray<UILabel *> *titles;
 @property(nonatomic, strong) NSArray<UILabel *> *badges;
 @property(nonatomic, strong) NSDictionary *model;
+@property(nonatomic, copy) NSString *pendingPath;
+@property(nonatomic) NSUInteger selectionGeneration;
 @end
 
 @implementation ThemeNavigation
@@ -65,7 +67,27 @@ CGRect VRRect(id value) {
 - (void)release:(UIButton *)button {
     [UIView animateWithDuration:.16 animations:^{ button.transform=CGAffineTransformIdentity; }];
 }
-- (void)select:(UIButton *)button { if (self.onSelect) self.onSelect(button.tag); }
+- (BOOL)selected:(NSDictionary *)item { return self.pendingPath.length?[item[@"path"] isEqual:self.pendingPath]:[item[@"selected"] boolValue]; }
+- (void)updateSelection {
+    NSArray *items=self.model[@"items"];if(items.count!=5)return;
+    UIColor *selected=VRColor(self.model[@"selectedColor"],UIColor.systemRedColor),*muted=VRColor(self.model[@"mutedColor"],UIColor.secondaryLabelColor);
+    self.selection.hidden=YES;
+    for(NSInteger i=0;i<5;i++) {
+        NSDictionary *item=items[i];BOOL chosen=[self selected:item];UIColor *color=self.pendingPath.length?(chosen?selected:muted):VRColor(item[@"color"],muted);
+        self.titles[i].textColor=color;self.icons[i].tintColor=color;
+        self.titles[i].font=[UIFont systemFontOfSize:self.titles[i].font.pointSize weight:chosen?UIFontWeightSemibold:UIFontWeightMedium];
+        self.buttons[i].accessibilityTraits=UIAccessibilityTraitButton|(chosen?UIAccessibilityTraitSelected:0);
+        if(chosen){self.selection.frame=CGRectInset(self.buttons[i].frame,3,1);self.selection.layer.cornerRadius=MAX(0,MIN(20,[item[@"radius"] doubleValue]));self.selection.backgroundColor=[color colorWithAlphaComponent:.1];self.selection.hidden=NO;}
+    }
+}
+- (void)cancelPendingSelection { self.pendingPath=nil;self.selectionGeneration++;[self updateSelection]; }
+- (void)select:(UIButton *)button {
+    if(button.tag<0||button.tag>=5||!self.model)return;
+    self.pendingPath=self.model[@"items"][button.tag][@"path"];NSUInteger generation=++self.selectionGeneration;
+    [self updateSelection];
+    if (self.onSelect) self.onSelect(button.tag);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,650*NSEC_PER_MSEC),dispatch_get_main_queue(),^{if(generation==self.selectionGeneration)[self cancelPendingSelection];});
+}
 - (BOOL)applyModel:(NSDictionary *)model webFrame:(CGRect)webFrame {
     NSArray *items=model[@"items"];
     CGRect nav=VRRect(model[@"frame"]);
@@ -80,6 +102,7 @@ CGRect VRRect(id value) {
     }
     if (seen.count!=5) { self.hidden=YES; return NO; }
     self.model=model;
+    for(NSDictionary *item in items)if(self.pendingPath.length&&[item[@"selected"] boolValue]&&[item[@"path"] isEqual:self.pendingPath]){self.pendingPath=nil;self.selectionGeneration++;break;}
     UIColor *background=VRColor(model[@"background"],UIColor.systemBackgroundColor);
     CGFloat red=0,green=0,blue=0,alpha=1; [background getRed:&red green:&green blue:&blue alpha:&alpha];
     self.overrideUserInterfaceStyle=(.2126*red+.7152*green+.0722*blue<.5)?UIUserInterfaceStyleDark:UIUserInterfaceStyleLight;
@@ -95,7 +118,8 @@ CGRect VRRect(id value) {
         if ([encoded isKindOfClass:NSString.class] && encoded.length<100000) {
             NSData *data=[[NSData alloc] initWithBase64EncodedString:encoded options:0];
             UIImage *image=data?[UIImage imageWithData:data scale:3]:nil;
-            self.icons[i].image=[image imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+            self.icons[i].image=[image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+            self.icons[i].tintColor=title.textColor;
         }
         NSDictionary *badge=item[@"badge"];
         if ([badge isKindOfClass:NSDictionary.class] && [badge[@"title"] isKindOfClass:NSString.class] && [badge[@"title"] length]<8) {
@@ -108,6 +132,7 @@ CGRect VRRect(id value) {
         button.accessibilityTraits=UIAccessibilityTraitButton|([item[@"selected"] boolValue]?UIAccessibilityTraitSelected:0);
     }
     [self layoutForWebFrame:webFrame];
+    [self updateSelection];
     self.hidden=![model[@"visible"] boolValue];
     return YES;
 }
@@ -130,7 +155,7 @@ CGRect VRRect(id value) {
             self.badges[i].frame=VRRect(item[@"badge"][@"frame"]);
             self.badges[i].layer.cornerRadius=self.badges[i].bounds.size.height/2;
         }
-        if ([item[@"selected"] boolValue]) {
+        if ([self selected:item]) {
             CGRect selection=CGRectInset(frame,3,1);
             self.selection.frame=selection; self.selection.layer.cornerRadius=MAX(0,MIN(20,[item[@"radius"] doubleValue]));
             self.selection.backgroundColor=[self.titles[i].textColor colorWithAlphaComponent:.1]; self.selection.hidden=NO;

@@ -9,7 +9,7 @@ cp -R "$ROOT/build/Payload/ERPStable.app" "$APP"
 xcrun --sdk iphonesimulator clang -arch "$ARCH" -isysroot "$SDK" \
   -mios-simulator-version-min=15.0 -fobjc-arc -O2 -DERP_TESTING=1 \
   -framework UIKit -framework Foundation -framework WebKit -framework CoreGraphics -framework UserNotifications -framework SafariServices \
-  "$ROOT/ERPStable/main.m" "$ROOT/ERPStable/ThemeNavigation.m" "$ROOT/ERPStable/ChatNotifications.m" -o "$APP/ERPStable"
+  "$ROOT/ERPStable/main.m" "$ROOT/ERPStable/ThemeNavigation.m" "$ROOT/ERPStable/ChatNotifications.m" "$ROOT/ERPStable/PageNavigation.m" -o "$APP/ERPStable"
 cp "$ROOT/scripts/layout-fixture.html" "$APP/layout-fixture.html"
 cp "$ROOT/scripts/navigation-fixture.html" "$APP/navigation-fixture.html"
 python3 - "$APP/Info.plist" <<'PY'
@@ -75,11 +75,13 @@ print('PASS: real simulator keyboard first show, reopen, accessory removal and v
 PY
 xcrun simctl launch --terminate-running-process "$SIM_ID" local.erp.stable --verify-tabs
 wait_for_report tabs-restored.json
+cp "$DATA_PATH/Documents/tabs-immediate.json" "$ROOT/build/tabs-immediate.json"
 for phase in tabs modal restored; do cp "$DATA_PATH/Documents/tabs-$phase.json" "$ROOT/build/tabs-$phase.json"; done
 python3 - "$ROOT/build" <<'PY'
 import json,sys
 from pathlib import Path
 stages={s:json.loads((Path(sys.argv[1])/f'tabs-{s}.json').read_text()) for s in ['tabs','modal','restored']}
+assert json.loads((Path(sys.argv[1])/'tabs-immediate.json').read_text())['selectedImmediately']==[3],'selection waited for the web bridge'
 for stage,data in stages.items():
     print(stage,data)
     assert 'error' not in data and data['plainNavigation'] and data['nativeTabCount']==5,data
@@ -115,6 +117,28 @@ assert stages['dark']['statusStyle']==1,stages['dark']
 print('PASS: actual iOS root/detail navigation, third-level chat push/back, keyboard, card action spacing and light/dark status bar')
 PYUX
 xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/app-ux.png"
+xcrun simctl launch --terminate-running-process "$SIM_ID" local.erp.stable --verify-motion
+wait_for_report motion-restored.json
+for phase in root push cancel-preview cancelled detail-preview chat-return restored; do cp "$DATA_PATH/Documents/motion-$phase.json" "$ROOT/build/motion-$phase.json"; done
+python3 - "$ROOT/build" <<'PYMOTION'
+import json,sys
+from pathlib import Path
+stages={s:json.loads((Path(sys.argv[1])/f'motion-{s}.json').read_text()) for s in ['root','push','cancel-preview','cancelled','detail-preview','chat-return','restored']}
+for stage,data in stages.items():
+    print(stage,data)
+    assert 'error' not in data and data['documentLoads']==1,data
+root,push,cancel,done,detail,chat,restored=[stages[s] for s in ['root','push','cancel-preview','cancelled','detail-preview','chat-return','restored']]
+assert root['path']=='/matches' and root['nativeNavVisible'],root
+assert push['path']=='/matches/thread' and push['canPreviewParent'] and not push['nativeNavVisible'],push
+assert cancel['interactive'] and cancel['previewKey']==root['currentKey'] and abs(cancel['progress']-.45)<.001,cancel
+assert abs(cancel['webTranslation']-cancel['webWidth']*.45)<1,cancel
+assert not done['transitioning'] and done['path']=='/matches/thread' and done['index']==push['index'] and done['draft']=='保留草稿' and done['webAlpha']==1 and done['webTranslation']==0,done
+assert detail['interactive'] and detail['path']=='/u/peer' and detail['previewKey']==push['currentKey'] and detail['previewKey']!=root['currentKey'],detail
+assert chat['path']=='/matches/thread' and chat['draft']=='保留草稿' and not chat['nativeNavVisible'] and not chat['transitioning'] and chat['webAlpha']==1,chat
+assert restored['path']=='/matches' and restored['index']==0 and restored['nativeNavVisible'] and not restored['transitioning'] and restored['webTranslation']==0,restored
+print('PASS: UIKit nested page previews, finger tracking, reverse-velocity cancellation, draft retention, committed parent return and no document reload')
+PYMOTION
+xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/app-motion.png"
 xcrun simctl launch --terminate-running-process "$SIM_ID" local.erp.stable --preview-login
 sleep 12
 xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/web-login.png"

@@ -1,0 +1,159 @@
+#import "PageNavigation.h"
+#import <math.h>
+
+@interface VRPageImage : NSObject
+@property(nonatomic,strong) UIImage *image;
+@property(nonatomic,strong) UIColor *header;
+@property(nonatomic,copy) NSString *path;
+@end
+@implementation VRPageImage
+@end
+
+@interface PageNavigation ()
+@property(nonatomic,weak) WKWebView *web;
+@property(nonatomic,weak) UIView *navigation;
+@property(nonatomic,weak) UIView *header;
+@property(nonatomic,strong) NSCache<NSString *,VRPageImage *> *images;
+@property(nonatomic,strong) NSMutableDictionary<NSString *,NSString *> *paths;
+@property(nonatomic,strong) UIImageView *underlay;
+@property(nonatomic,strong) UIView *shade;
+@property(nonatomic,strong) UIImageView *outgoing;
+@property(nonatomic,copy,readwrite) NSString *currentKey;
+@property(nonatomic,copy) NSString *parentKey;
+@property(nonatomic,copy) NSString *currentPath;
+@property(nonatomic,copy,readwrite) NSString *previewKey;
+@property(nonatomic,readwrite) BOOL transitioning;
+@property(nonatomic,readwrite) BOOL interactive;
+@property(nonatomic,readwrite) CGFloat progress;
+@property(nonatomic) BOOL waitingReturn;
+@property(nonatomic) BOOL animationDone;
+@property(nonatomic) BOOL routeReady;
+@property(nonatomic) NSUInteger generation;
+@property(nonatomic) NSUInteger captureGeneration;
+@property(nonatomic,strong) UIColor *fromHeader;
+@property(nonatomic,strong) UIColor *toHeader;
+@end
+
+@implementation PageNavigation
+- (instancetype)initWithWebView:(WKWebView *)web navigation:(UIView *)navigation header:(UIView *)header {
+    if(!(self=[super init]))return nil;
+    self.web=web;self.navigation=navigation;self.header=header;self.currentKey=@"";self.currentPath=@"";
+    self.images=[NSCache new];self.images.countLimit=8;self.images.totalCostLimit=40*1024*1024;self.paths=[NSMutableDictionary new];
+    self.underlay=[UIImageView new];self.underlay.contentMode=UIViewContentModeScaleToFill;self.underlay.hidden=YES;self.underlay.userInteractionEnabled=NO;
+    [web.superview insertSubview:self.underlay belowSubview:web];
+    self.shade=[UIView new];self.shade.backgroundColor=UIColor.blackColor;[self.underlay addSubview:self.shade];
+    self.outgoing=[UIImageView new];self.outgoing.contentMode=UIViewContentModeScaleToFill;self.outgoing.hidden=YES;self.outgoing.userInteractionEnabled=NO;
+    [web.superview addSubview:self.outgoing];
+    return self;
+}
+- (CGRect)viewport { CGSize size=self.web.bounds.size;return CGRectMake(self.web.center.x-size.width/2,self.web.center.y-size.height/2,size.width,size.height); }
+- (void)layout {
+    CGRect frame=[self viewport];
+    for(UIView *view in @[self.underlay,self.outgoing]){view.bounds=CGRectMake(0,0,frame.size.width,frame.size.height);view.center=CGPointMake(CGRectGetMidX(frame),CGRectGetMidY(frame));}
+    self.shade.frame=self.underlay.bounds;
+    self.web.layer.shadowPath=[UIBezierPath bezierPathWithRect:self.web.bounds].CGPath;
+}
+- (BOOL)canPreviewParent { return self.parentKey.length && [self.images objectForKey:self.parentKey]!=nil; }
+- (void)capture {
+    if(!self.currentKey.length||self.transitioning||self.web.alpha<.99)return;
+    NSString *key=self.currentKey,*path=self.currentPath;NSUInteger generation=++self.captureGeneration;
+    CGRect viewport=[self viewport];if(viewport.size.width<100||viewport.size.height<100)return;
+    [self.web takeSnapshotWithConfiguration:nil completionHandler:^(UIImage *image,NSError *error){
+        if(!image||generation!=self.captureGeneration||![self.currentKey isEqual:key]||self.transitioning)return;
+        UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat preferredFormat];format.scale=MIN(2,UIScreen.mainScreen.scale);format.opaque=YES;
+        UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithSize:viewport.size format:format];
+        UIImage *composite=[renderer imageWithActions:^(UIGraphicsImageRendererContext *context){
+            [image drawInRect:CGRectMake(0,0,viewport.size.width,viewport.size.height)];
+            if(!self.navigation.hidden) {
+                CGRect nav=self.navigation.frame;CGContextSaveGState(context.CGContext);
+                CGContextTranslateCTM(context.CGContext,nav.origin.x-viewport.origin.x,nav.origin.y-viewport.origin.y);
+                [self.navigation.layer renderInContext:context.CGContext];CGContextRestoreGState(context.CGContext);
+            }
+        }];
+        VRPageImage *page=[VRPageImage new];page.image=composite;page.header=self.header.backgroundColor?:UIColor.systemBackgroundColor;page.path=path;
+        NSUInteger cost=(NSUInteger)(composite.size.width*composite.size.height*format.scale*format.scale*4);
+        [self.images setObject:page forKey:key cost:cost];self.paths[path]=key;
+        if(self.paths.count>20){for(NSString *p in self.paths.allKeys)if(![self.images objectForKey:self.paths[p]])[self.paths removeObjectForKey:p];}
+    }];
+}
+- (void)setRunning:(BOOL)value {
+    self.transitioning=value;self.web.userInteractionEnabled=!value;
+    if(self.onTransitionChange)self.onTransitionChange(value);
+}
+- (void)shadow:(BOOL)visible {
+    self.web.layer.shadowColor=UIColor.blackColor.CGColor;self.web.layer.shadowOpacity=visible?.2:0;
+    self.web.layer.shadowRadius=12;self.web.layer.shadowOffset=CGSizeMake(-4,0);
+}
+- (void)headerAtProgress:(CGFloat)progress {
+    CGFloat a[4]={1,1,1,1},b[4]={1,1,1,1};[self.fromHeader getRed:&a[0] green:&a[1] blue:&a[2] alpha:&a[3]];[self.toHeader getRed:&b[0] green:&b[1] blue:&b[2] alpha:&b[3]];
+    UIColor *color=[UIColor colorWithRed:a[0]+(b[0]-a[0])*progress green:a[1]+(b[1]-a[1])*progress blue:a[2]+(b[2]-a[2])*progress alpha:1];
+    if(self.onHeaderColor)self.onHeaderColor(color);
+}
+- (void)complete {
+    self.generation++;self.waitingReturn=NO;self.interactive=NO;self.progress=0;
+    self.web.transform=CGAffineTransformIdentity;self.web.alpha=1;[self shadow:NO];
+    self.underlay.hidden=YES;self.underlay.image=nil;self.underlay.transform=CGAffineTransformIdentity;
+    self.outgoing.hidden=YES;self.outgoing.image=nil;self.outgoing.transform=CGAffineTransformIdentity;self.previewKey=nil;
+    [self setRunning:NO];
+}
+- (void)moveToKey:(NSString *)key parent:(NSString *)parent path:(NSString *)path direction:(NSString *)direction {
+    if(!key.length)return;
+    NSString *oldKey=self.currentKey;VRPageImage *old=[self.images objectForKey:oldKey];
+    self.currentKey=key;self.parentKey=parent;self.currentPath=path;
+    if(self.waitingReturn)return;
+    if(self.transitioning)[self complete];
+    if(!oldKey.length||[oldKey isEqual:key]||[direction isEqual:@"none"]||[direction isEqual:@"tab"]||UIAccessibilityIsReduceMotionEnabled())return;
+    [self layout];NSUInteger generation=++self.generation;CGFloat width=self.web.bounds.size.width;
+    self.routeReady=NO;self.animationDone=NO;[self setRunning:YES];
+    if([direction isEqual:@"push"]) {
+        self.underlay.image=old.image;self.underlay.hidden=old==nil;self.previewKey=oldKey;
+        self.underlay.transform=CGAffineTransformIdentity;self.shade.alpha=0;
+        self.web.transform=CGAffineTransformMakeTranslation(width,0);[self shadow:YES];
+        [UIView animateWithDuration:.32 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+            self.web.transform=CGAffineTransformIdentity;self.underlay.transform=CGAffineTransformMakeTranslation(-width*.27,0);self.shade.alpha=.2;
+        } completion:^(BOOL finished){if(generation==self.generation)[self complete];}];
+    } else {
+        VRPageImage *target=[self.images objectForKey:key]?:[self.images objectForKey:self.paths[path]?:@""];
+        self.underlay.image=target.image;self.underlay.hidden=target==nil;self.previewKey=key;
+        self.underlay.transform=CGAffineTransformMakeTranslation(-width*.27,0);self.shade.alpha=.2;
+        self.outgoing.image=old.image;self.outgoing.hidden=old==nil;self.web.alpha=target?0:1;
+        [UIView animateWithDuration:.3 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+            self.outgoing.transform=CGAffineTransformMakeTranslation(width,0);self.underlay.transform=CGAffineTransformIdentity;self.shade.alpha=0;
+        } completion:^(BOOL finished){if(generation!=self.generation)return;self.animationDone=YES;if(self.routeReady)[self complete];}];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,1500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{if(generation==self.generation)[self complete];});
+    }
+}
+- (void)settled:(NSString *)key {
+    if(![key isEqual:self.currentKey])return;self.routeReady=YES;
+    if(self.transitioning&&!self.interactive&&self.animationDone)[self complete];
+}
+- (BOOL)beginInteractive {
+    if(self.transitioning||!self.canPreviewParent)return NO;
+    VRPageImage *target=[self.images objectForKey:self.parentKey];[self layout];self.generation++;
+    self.underlay.image=target.image;self.underlay.hidden=NO;self.previewKey=self.parentKey;
+    self.fromHeader=self.header.backgroundColor;self.toHeader=target.header;
+    self.interactive=YES;self.waitingReturn=NO;self.animationDone=NO;self.routeReady=NO;self.progress=0;
+    [self shadow:YES];[self setRunning:YES];[self updateInteractive:0];return YES;
+}
+- (void)updateInteractive:(CGFloat)distance {
+    if(!self.interactive)return;CGFloat width=self.web.bounds.size.width;if(width<=0)return;
+    self.progress=MAX(0,MIN(1,distance/width));self.web.transform=CGAffineTransformMakeTranslation(width*self.progress,0);
+    self.underlay.transform=CGAffineTransformMakeTranslation(-width*.27*(1-self.progress),0);self.shade.alpha=.2*(1-self.progress);[self headerAtProgress:self.progress];
+}
+- (void)finishInteractive:(CGFloat)distance velocity:(CGFloat)velocity cancelled:(BOOL)cancelled {
+    if(!self.interactive)return;CGFloat width=self.web.bounds.size.width;
+    BOOL commit=!cancelled&&velocity>-150&&(distance+velocity*.16>width*.36 || (velocity>700&&distance>12));
+    NSUInteger generation=self.generation;CGFloat endpoint=commit?1:0;
+    NSTimeInterval duration=MAX(.12,MIN(.32,.3*fabs(endpoint-self.progress)));
+    [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionCurveEaseOut|UIViewAnimationOptionBeginFromCurrentState animations:^{[self updateInteractive:endpoint*width];}
+      completion:^(BOOL finished){
+        if(generation!=self.generation)return;
+        if(!commit){[self headerAtProgress:0];[self complete];return;}
+        self.interactive=NO;self.waitingReturn=YES;self.animationDone=YES;self.web.alpha=0;self.web.transform=CGAffineTransformIdentity;
+        if(self.onRequestBack)self.onRequestBack();else[self abortReturn];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,1500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{if(generation==self.generation&&self.waitingReturn)[self complete];});
+      }];
+}
+- (void)abortReturn { if(self.fromHeader&&self.onHeaderColor)self.onHeaderColor(self.fromHeader);[self complete]; }
+- (void)clear { [self complete];[self.images removeAllObjects];[self.paths removeAllObjects];self.captureGeneration++; }
+@end

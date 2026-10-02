@@ -4,9 +4,10 @@
   if (window !== window.top || location.origin !== 'https://erp.sex' || !bridge) return;
   const originalFetch = window.fetch, OriginalWebSocket = window.WebSocket;
   const seen = new Set(), matches = new Map();
+  const localEvents = new WeakSet();
   let userId = '', unread = null, socket = null, active = true, busy = false;
   let pollTimer = null, fallbackTimer = null, lastDetailed = 0, sessionStarted = Date.now();
-  let epoch = 0, controller = null, retryDelay = 0;
+  let epoch = 0, controller = null, retryDelay = 0, syncAgain = false;
   let requestHeaders = { Accept: 'application/json', 'X-Content-Mode': 'sfw' };
   function post(value) { try { bridge.postMessage(value); } catch {} }
   function validId(value) { return typeof value === 'string' && /^[\w-]{1,120}$/.test(value); }
@@ -32,6 +33,7 @@
     if (!Number.isSafeInteger(count) || count < 0 || count > 100000) return;
     const increased = unread !== null && count > unread;
     unread = count; post({ kind: 'counters', unread: count });
+    window.__vrcrpSiteCache?.commitCounters(value);
     if (increased && Date.now() - lastDetailed > 3000) {
       clearTimeout(fallbackTimer);
       fallbackTimer = setTimeout(() => { if (Date.now() - lastDetailed > 3000) post({ kind: 'genericMessage', unread }); }, 2200);
@@ -46,7 +48,10 @@
     clearTimeout(fallbackTimer); clearTimeout(pollTimer);
     postSession(); if (userId) schedule(0);
   }
-  function postSession() { post({ kind: 'session', userId, mode: requestHeaders['X-Content-Mode'], language: requestHeaders['Accept-Language'] || navigator.language || 'en', userAgent: navigator.userAgent }); }
+  function postSession() {
+    window.__vrcrpSiteCache?.session(userId, requestHeaders);
+    post({ kind: 'session', userId, mode: requestHeaders['X-Content-Mode'], language: requestHeaders['Accept-Language'] || navigator.language || 'en', userAgent: navigator.userAgent });
+  }
   function snapshot(value) {
     if (!userId || !Array.isArray(value?.items)) return;
     const summaries = [];
@@ -62,42 +67,57 @@
       summaries.push({ matchId: id, title, messageId: latest?.id || '', unread: item.unreadCount || 0 });
     }
     post({ kind: 'snapshot', items: summaries });
+    window.__vrcrpSiteCache?.commitMatches(value);
+    window.__vrcrpSiteCache?.warmList(value);
   }
-  function refreshList() {
-    // Use the site's existing subscription to invalidate its React Query list.
-    // This is local only: no fake messages or read acknowledgements are sent.
-    if (active && !document.hidden && socket) socket.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({type:'match.updated',data:{}})}));
+  window.__vrcrpDispatchServerEvent = (type,data) => {
+    if (!socket) return false;
+    const event = new MessageEvent('message',{data:JSON.stringify({type,data})});
+    localEvents.add(event); socket.dispatchEvent(event); return true;
+  };
+  function refreshList(value, state='active') {
+    if (!active || document.hidden) return;
+    if (value && window.__vrcrpSiteCache?.commitMatches(value,state)) return;
+    if (window.__vrcrpSiteCache?.refreshList()) return;
+    window.__vrcrpDispatchServerEvent('match.updated',{});
   }
   async function sync() {
     if (!userId || !active || document.hidden || busy || !navigator.onLine) return;
     busy = true;
-    const owner = epoch;
+    let owner = epoch;
     controller = new AbortController();
     const timeout = setTimeout(() => controller?.abort(), 12000);
     try {
       const options = { credentials: 'include', cache: 'no-store', headers: requestHeaders, signal: controller.signal };
-      const responses = await Promise.all([originalFetch.call(window,'/api/v1/me/counters',options),originalFetch.call(window,'/api/v1/matches?state=active',options)]);
+      const states = window.__vrcrpSiteCache?.states() || ['active'];
+      const responses = await Promise.all([originalFetch.call(window,'/api/v1/me/counters',options),originalFetch.call(window,'/api/v1/matches?state=active',options),...(states.includes('unmatched')?[originalFetch.call(window,'/api/v1/matches?state=unmatched',options)]:[])]);
       if (owner !== epoch) return;
       if (responses.some(r => r.status === 401)) { session(null); return; }
       retryDelay = responses.some(r => r.status === 429 || r.status >= 500) ? 30000 : 0;
       for (const r of responses) if (r.status === 429) retryDelay = Math.max(retryDelay, Math.min(120000, (Number(r.headers.get('Retry-After')) || 30) * 1000));
       for (let i=0;i<responses.length;i++) if (responses[i].ok) {
         const value = unwrap(await responses[i].json()); if (owner !== epoch) return;
-        i === 0 ? counters(value) : snapshot(value);
-        if (i === 0 && socket) socket.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({type:'counters',data:value})}));
+        if (i === 0) {
+          counters(value);
+          if (!window.__vrcrpSiteCache?.commitCounters(value)) window.__vrcrpDispatchServerEvent('counters',value);
+        } else {
+          if (i === 1) snapshot(value);
+          if (location.pathname === '/matches') refreshList(value,i===1?'active':'unmatched');
+        }
       }
-      if (location.pathname === '/matches' && responses[1].ok) refreshList();
-    } catch { retryDelay = 30000; } finally { busy = false; controller = null; clearTimeout(timeout); }
+      if (/^\/matches\/[^/]+$/.test(location.pathname)) window.__vrcrpSiteCache?.refreshChat().catch(()=>{});
+    } catch { if(owner===epoch)retryDelay = 30000; } finally { busy = false; controller = null; clearTimeout(timeout); }
   }
   function schedule(delay) {
     clearTimeout(pollTimer);
     if (!userId || !active || document.hidden) return;
-    pollTimer = setTimeout(async () => { await sync(); schedule(Math.max(retryDelay, location.pathname === '/matches' ? 5000 : 15000)); }, delay);
+    if (busy) { if(delay<=350)syncAgain=true; return; }
+    pollTimer = setTimeout(async () => { await sync(); const urgent=syncAgain;syncAgain=false; schedule(Math.max(retryDelay,urgent?200:location.pathname==='/matches'?2000:/^\/matches\/[^/]+$/.test(location.pathname)?7000:10000)); }, delay);
   }
-  window.__vrcrpSyncChats = () => { if (!busy) schedule(0); };
-  window.__vrcrpAppActive = value => { active = value === true; if (active) schedule(0); else clearTimeout(pollTimer); };
+  window.__vrcrpSyncChats = () => schedule(0);
+  window.__vrcrpAppActive = value => { active = value === true; window.__vrcrpSiteCache?.active(active); if (active) schedule(0); else clearTimeout(pollTimer); };
   window.fetch = function (...args) {
-    const owner = epoch;
+    let owner = epoch;
     const result = Reflect.apply(originalFetch,this,args);
     let url, method;
     try {
@@ -109,12 +129,14 @@
         const changed = mode && mode !== requestHeaders['X-Content-Mode'] || language && language !== requestHeaders['Accept-Language'];
         if (['sfw','mixed','r18'].includes(mode)) requestHeaders['X-Content-Mode'] = mode;
         if (language && language.length < 80) requestHeaders['Accept-Language'] = language;
-        if (changed && userId) postSession();
+        if(changed){epoch++;controller?.abort();retryDelay=0;if(userId){postSession();schedule(0);}}
       }
     } catch {}
+    owner=epoch;
     if (url?.origin === location.origin) result.then(response => {
       if (owner !== epoch) return;
       if (url.pathname === '/api/v1/me' && response.status === 401 || url.pathname === '/api/v1/auth/logout' && response.ok) { session(null); return; }
+      if(response.ok && method==='POST' && /^\/api\/v1\/matches\/[^/]+\/(read|messages)$/.test(url.pathname))schedule(250);
       if (!response.ok || method !== 'GET') return;
       if (['/api/v1/me','/api/v1/me/counters','/api/v1/matches'].includes(url.pathname)) response.clone().json().then(data => {
         if (owner !== epoch) return;
@@ -133,11 +155,12 @@
       if (url?.protocol === 'wss:' && url.host === location.host && url.pathname === '/api/v1/ws') {
         socket = connection;
         connection.addEventListener('message',event => { try {
-          if (connection !== socket) return;
+          if (connection !== socket || localEvents.has(event)) return;
           const value = JSON.parse(event.data);
+          window.__vrcrpSiteCache?.serverEvent(value.type,value.data);
           if (value.type === 'counters') counters(value.data);
-          else if (value.type === 'message.new') { message(value.data); if (location.pathname === '/matches') setTimeout(refreshList,0); schedule(1000); }
-          else if (['match.new','match.updated','match.closed'].includes(value.type)) schedule(1000);
+          else if (value.type === 'message.new') { message(value.data); if (location.pathname === '/matches') setTimeout(()=>refreshList(),0); schedule(150); }
+          else if (['match.new','match.updated','match.closed','message.recalled','presence.updated','account.updated'].includes(value.type)) { if(location.pathname==='/matches')refreshList(); schedule(150); }
         } catch {} });
         connection.addEventListener('open',()=>schedule(0));
         connection.addEventListener('close',()=>schedule(1000));

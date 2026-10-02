@@ -9,5 +9,6 @@ CGRect VRRect(id value);
 @property(nonatomic, copy, nullable) void (^onSelect)(NSInteger slot);
 - (BOOL)applyModel:(NSDictionary *)model webFrame:(CGRect)webFrame;
 - (void)layoutForWebFrame:(CGRect)webFrame;
+- (void)cancelPendingSelection;
 @end
 NS_ASSUME_NONNULL_END

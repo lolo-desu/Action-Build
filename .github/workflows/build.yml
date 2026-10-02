@@ -44,9 +44,12 @@ jobs:
             build/tabs-tabs.json
             build/tabs-modal.json
             build/tabs-restored.json
+            build/tabs-immediate.json
             build/app-tabs.png
             build/ux-*.json
             build/app-ux.png
+            build/motion-*.json
+            build/app-motion.png
             build/simulator-timeout.png
             build/simulator-timeout.log
           if-no-files-found: error

@@ -43,6 +43,7 @@ html[data-fixture-screen="discover"] main{display:block}.page-heading{height:72p
 window.__fixtureOpen=path=>{history.pushState({idx:(history.state?.idx??0)+1,key:Math.random().toString()},'',path);render()};
 function render(){const path=location.pathname,chat=/^\/matches\/[^/]+$/.test(path);document.documentElement.dataset.fixtureScreen=path==='/discover'?'discover':chat?'chat':'profile';document.querySelector('.shell').classList.toggle('h-dvh',chat);const main=document.getElementById('main');
 if(path==='/discover')main.innerHTML='<h1 class="page-heading">探索 · 布局测试</h1><div class="deck"><div class="stage">虚构卡片</div><div class="actions"><button class="act act-pass" aria-label="跳过">×</button><button class="act act-super" aria-label="超级喜欢">★</button><button class="act act-like" aria-label="喜欢">♥</button></div></div>';
+else if(path==='/matches')main.innerHTML='<section class="profile"><h1>配对 · 列表测试</h1><a href="/matches/thread" onclick="event.preventDefault();__fixtureOpen(\'/matches/thread\')">虚构会话</a></section>';
 else if(chat)main.innerHTML='<section class="chat"><header class="chat-header">聊天 · 布局测试</header><div class="messages">虚构测试消息</div><form class="composer"><textarea placeholder="消息"></textarea><button type="button">发送</button></form></section>';
 else main.innerHTML='<section class="profile"><h1>资料详情 · 布局测试</h1><p>从聊天进入的第三级页面。</p></section>';
 active();}
