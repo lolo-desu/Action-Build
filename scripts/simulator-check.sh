@@ -135,7 +135,7 @@ for stage,data in stages.items():
         assert len(data['actions'])==3 and all(b['width']>=56 and b['height']>=56 and b['bottom']<=data['navTop']-10 for b in data['actions']),data
     else:
         assert not data['nativeNavVisible'] and data['webNavVisibility']=='hidden' and data['canGoBack'],data
-        if stage=='chat':assert data['keyboardVisible'] and data['inputBottom']<=data['nativeHeight'] and not data['edgeBackEnabled'],data
+        if stage=='chat':assert data['keyboardVisible'] and data['inputBottom']<=data['nativeHeight'] and data['edgeBackEnabled'],data
         else:assert data['edgeBackEnabled'],data
     expected=[24/255,28/255,35/255,1] if stage=='dark' else [1,1,1,1]
     assert max(abs(a-b) for a,b in zip(data['statusColor'],expected))<1/255,data
@@ -144,6 +144,31 @@ assert stages['dark']['statusStyle']==1,stages['dark']
 print('PASS: actual iOS root/detail navigation, third-level chat push/back, keyboard, card action spacing and light/dark status bar')
 PYUX
 xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/app-ux.png"
+xcrun simctl launch --terminate-running-process "$SIM_ID" local.erp.stable --verify-navigation
+wait_for_report navigation-completed.json
+cp "$DATA_PATH/Documents/"navigation-*.json "$ROOT/build/"
+python3 - "$ROOT/build" <<'PYNAVIGATION'
+import json,sys
+from pathlib import Path
+names=['cold-entry','interrupted-push','cancelled','keyboard-preview','keyboard-cancel','keyboard-return','reentered','dismissed-keyboard','nested-return','loading-return','completed']
+stages={s:json.loads((Path(sys.argv[1])/f'navigation-{s}.json').read_text()) for s in names}
+for name,data in stages.items():
+ print(name,data)
+ assert 'error' not in data and data['documentLoads']==1 and data['webEnabled'] and data['alpha']==1,data
+cold=stages['cold-entry'];assert cold['backAllowed'] and cold['backEnabled'] and not cold['previewCached'] and cold['elapsed']<1.2,cold
+assert stages['interrupted-push']['began'] and stages['interrupted-push']['interactive'],stages['interrupted-push']
+assert stages['cancelled']['draft']=='快速返回草稿' and not stages['cancelled']['transitioning'],stages['cancelled']
+for phase in ['keyboard-preview','keyboard-cancel']:
+ data=stages[phase];assert data['keyboard'] and data['focused'] and data['backEnabled'],data
+assert stages['keyboard-preview']['began'] and stages['keyboard-preview']['interactive'],stages['keyboard-preview']
+assert stages['keyboard-return']['path']=='/matches' and not stages['keyboard-return']['keyboard'],stages['keyboard-return']
+assert stages['reentered']['draft']=='快速返回草稿' and stages['reentered']['backAllowed'],stages['reentered']
+assert not stages['dismissed-keyboard']['keyboard'] and stages['dismissed-keyboard']['backAllowed'],stages['dismissed-keyboard']
+for phase in ['nested-return','loading-return','completed']:
+ data=stages[phase];assert data['path']=='/matches' and data['index']==0 and not data['transitioning'],data
+assert stages['completed']['cycles']==10,stages['completed']
+print('PASS: actual iOS immediate cold-page return without snapshot; interruptible push; keyboard preview/cancel/commit and restored draft; dismissed-keyboard return; serialized multi-level return; slow-page return; ten rapid re-entry cycles')
+PYNAVIGATION
 xcrun simctl launch --terminate-running-process "$SIM_ID" local.erp.stable --verify-motion
 wait_for_report motion-restored.json
 for phase in root push cancel-preview cancelled detail-preview chat-return restored; do cp "$DATA_PATH/Documents/motion-$phase.json" "$ROOT/build/motion-$phase.json"; done

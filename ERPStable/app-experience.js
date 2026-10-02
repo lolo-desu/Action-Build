@@ -140,7 +140,7 @@
       if(right>left&&bottom>top)zones.push({x:left,y:top,width:right-left,height:bottom-top});
       if(zones.length===100)break;
     }
-    const fingerprint=JSON.stringify(zones);if(fingerprint!==zonesFingerprint){zonesFingerprint=fingerprint;post({kind:'gestureZones',zones});}
+    const fingerprint=entryKey()+JSON.stringify(zones);if(fingerprint!==zonesFingerprint){zonesFingerprint=fingerprint;post({kind:'gestureZones',entryKey:entryKey(),zones});}
   }
   document.addEventListener('scroll',scheduleGestureZones,{capture:true,passive:true});
   document.addEventListener('pointerdown',updateGestureZones,{capture:true,passive:true});
@@ -178,6 +178,7 @@
   const pathViews = new Map();
   let index = 0;
   let direction = 'none', pendingRestore = null, settleGeneration = 0;
+  let backQueue=0,backInFlight=false,backTimer=null,forwardIntent=null;
   let baseIndex = Number.isInteger(history.state?.idx) ? history.state.idx : 0;
   const entryKey = () => String(entryKeys[index] || 'vr-' + index);
   function saveView() {
@@ -215,18 +216,23 @@
         }
       }
       pendingRestore=null;
-      requestAnimationFrame(()=>requestAnimationFrame(()=>{if(owner===settleGeneration)post({kind:'routeSettled',entryKey:key,path:location.pathname});}));
+      // A covered WebKit view may pause animation frames. Restoring an entry
+      // must not depend on a paint to acknowledge that history traversal.
+      if(owner===settleGeneration&&key===entryKey())post({kind:'routeSettled',entryKey:key,path:location.pathname});
     }
     attempt();
   }
   function announceRoute() {
+    generation++;settleGeneration++;
     post({ kind: 'route', path: location.pathname, entryKey:entryKey(),parentKey:index>0?String(entryKeys[index-1]):null,direction,showTabs: tabPages.has(location.pathname), canGoBack: index > 0 && !roots.has(location.pathname), refreshable: refreshable.has(location.pathname) });
     if (location.pathname === '/matches') window.__vrcrpSyncChats?.();
     direction='none';
+    const key=entryKey();setTimeout(()=>{if(key===entryKey())settle();},0);
   }
   async function update() {
     queued = false;
-    const currentGeneration = ++generation;
+    let currentGeneration = ++generation;
+    const modelKey=entryKey();
     const root = document.documentElement;
     if (!root || !document.head) return;
     root.dataset.vrcrpApp = 'true';
@@ -241,7 +247,7 @@
     if (routePending) {
       routePending = false;
       if (!routeAnnounced) announceRoute();
-      routeAnnounced = false; settle(); lastPath = location.pathname;
+      routeAnnounced = false; currentGeneration=generation; lastPath = location.pathname;
     }
     if (location.pathname === '/settings/notifications' && !document.getElementById('vrcrp-system-notifications')) {
       const main = document.getElementById('main');
@@ -263,7 +269,7 @@
     setProperty('--vrcrp-nav-space', `${showTabs ? navHeight : 0}px`);
     fitSwipeControls(showTabs ? navHeight : 0);
     updateTopSurface(); updateGestureZones();
-    let model = { kind: 'navigation', visible: false, overlay: false };
+    let model = { kind: 'navigation', entryKey:modelKey, visible: false, overlay: false };
     if (nav && anchors.length === 5 && getComputedStyle(nav).display !== 'none' && nav.getBoundingClientRect().width > 0) {
       const rect = nav.getBoundingClientRect();
       // Native views must not cover a site's modal, menu backdrop or lightbox.
@@ -289,11 +295,11 @@
           badge: badge ? { title: badge.textContent, frame: box(badge, a.getBoundingClientRect()), color: rgba(badgeStyle.color), background: rgba(badgeStyle.backgroundColor) } : null,
         };
       }));
-      if (currentGeneration !== generation || nav !== document.querySelector('.app-bottom')) return;
+      if (currentGeneration !== generation || modelKey!==entryKey() || nav !== document.querySelector('.app-bottom')) return;
       let background = rgba(navStyle.backgroundColor);
       if (background[3] < .05) background = rgba(getComputedStyle(document.body).backgroundColor);
       const theme=getComputedStyle(root);
-      model = { kind: 'navigation', visible, overlay, frame: box(nav), bottomPadding: parseFloat(navStyle.paddingBottom) || 0, background, borderColor: rgba(navStyle.borderTopColor), borderWidth: parseFloat(navStyle.borderTopWidth) || 0, selectedColor:rgba('rgb('+theme.getPropertyValue('--primary').trim()+')'),mutedColor:theme.getPropertyValue('--muted').trim()?rgba('rgb('+theme.getPropertyValue('--muted').trim()+')'):items.find(i=>!i.selected)?.color || [0.45,0.5,0.6,1], items };
+      model = { kind: 'navigation', entryKey:modelKey, visible, overlay, frame: box(nav), bottomPadding: parseFloat(navStyle.paddingBottom) || 0, background, borderColor: rgba(navStyle.borderTopColor), borderWidth: parseFloat(navStyle.borderTopWidth) || 0, selectedColor:rgba('rgb('+theme.getPropertyValue('--primary').trim()+')'),mutedColor:theme.getPropertyValue('--muted').trim()?rgba('rgb('+theme.getPropertyValue('--muted').trim()+')'):items.find(i=>!i.selected)?.color || [0.45,0.5,0.6,1], items };
     }
     const fingerprint = JSON.stringify(model);
     if (fingerprint !== navFingerprint) { navFingerprint = fingerprint; post(model); }
@@ -328,7 +334,33 @@
     }
     return false;
   };
-  window.__vrcrpBack = () => { if (index > 0 && !roots.has(location.pathname)) { saveView(); document.activeElement?.blur?.();history.back();return true; } return false; };
+  function drainBack(){
+    if(backInFlight||!backQueue)return;
+    if(index<=0||roots.has(location.pathname)){backQueue=0;return;}
+    backQueue--;backInFlight=true;saveView();document.activeElement?.blur?.();
+    // One browser traversal at a time; a second intent waits for popstate.
+    history.back();clearTimeout(backTimer);
+    backTimer=setTimeout(()=>{backInFlight=false;backQueue=0;replayForward();},800);
+  }
+  function replayForward(){
+    const intent=forwardIntent;forwardIntent=null;if(!intent)return;
+    setTimeout(()=>{
+      const fresh=[...document.querySelectorAll('a[href]')].find(a=>a.href===intent.href);
+      if(fresh)fresh.click();else if(intent.node.isConnected)intent.node.click();
+    },0);
+  }
+  window.__vrcrpBack = () => {
+    if(index<=0||roots.has(location.pathname))return false;
+    if(backQueue<index-(backInFlight?1:0))backQueue++;
+    drainBack();return true;
+  };
+  document.addEventListener('click',event=>{
+    if(!backInFlight)return;
+    const a=event.target.closest?.('a[href]');if(!a||a.target||a.hasAttribute('download'))return;
+    const url=new URL(a.href,location.href);if(url.origin!==location.origin)return;
+    event.preventDefault();event.stopImmediatePropagation();
+    forwardIntent={href:a.href,node:a};backQueue=0;
+  },true);
   window.__vrcrpOpenRoot = path => { const a=document.querySelector(`.app-bottom a[href="${path}"]`);if(a)a.click();else location.assign(path); };
   window.__vrcrpClearNavigation = () => { views.clear();pathViews.clear(); pendingRestore=null; };
   window.__vrcrpOpenMatches = () => {
@@ -354,6 +386,7 @@
       const changed=nextPath!==location.pathname;
       const sibling=changed&&editorPath(nextPath)&&editorPath(location.pathname);
       if(changed) {
+        backQueue=0;forwardIntent=null;
         direction=sibling?'tab':roots.has(nextPath)?(roots.has(location.pathname)?'tab':'pop'):'push';
         willNavigate(nextPath,direction);
       }
@@ -374,6 +407,7 @@
     const path = location.pathname + location.search;
     if(!event.isTrusted && entries[index]===path && Number.isInteger(history.state?.idx) && history.state.idx-baseIndex===index)return;
     const oldIndex=index;
+    clearTimeout(backTimer);backInFlight=false;
     saveView();
     const target = Number.isInteger(history.state?.idx) ? history.state.idx - baseIndex : -1;
     index = target >= 0 && target < entries.length && entries[target] === path ? target : Math.max(0, entries.lastIndexOf(path));
@@ -381,6 +415,7 @@
     pendingRestore=views.get(entryKey()) || null;
     announceRoute(); routeAnnounced = true; lastPath = location.pathname;
     routePending = true; schedule();
+    if(forwardIntent)replayForward();else setTimeout(drainBack,0);
   });
   document.addEventListener('click', event => {
     if (!event.isTrusted) return;

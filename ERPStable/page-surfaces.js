@@ -67,14 +67,16 @@
   }
   function schedule(){if(!queued){queued=true;requestAnimationFrame(update);}}
   window.__vrcrpRefreshSurface=update;
-  window.__vrcrpCloseProfileOverlay=()=>{const close=overlay?.querySelector('.sticky button');if(!close)return false;close.click();return true;};
+  window.__vrcrpCloseProfileOverlay=()=>{update();const close=overlay?.querySelector('.sticky button');if(!close)return false;document.activeElement?.blur?.();close.click();queueMicrotask(update);return true;};
   window.__vrcrpPageBack=()=>{
+    update();
     if(overlay)return window.__vrcrpCloseProfileOverlay();
+    if(window.__vrcrpBack?.())return true;
     const button=document.querySelector('#main [data-vrcrp-page-back]');
-    if(button){button.click();return true;}return window.__vrcrpBack?.()===true;
+    if(button){document.activeElement?.blur?.();button.click();return true;}return false;
   };
   window.__vrcrpPullSurface=space=>{const main=document.getElementById('main');if(!main)return;const amount=Math.max(0,Math.min(72,Number(space)||0));main.style.transition=amount||matchMedia('(prefers-reduced-motion: reduce)').matches?'none':'transform 160ms ease-out';main.style.setProperty('--vrcrp-pull-space',`${amount}px`);if(amount)main.dataset.vrcrpPulling='true';else main.removeAttribute('data-vrcrp-pulling');};
-  document.addEventListener('click',event=>{if(event.target.closest?.('[data-vrcrp-chat-back]')&&window.__vrcrpBack?.()){event.preventDefault();event.stopImmediatePropagation();}},true);
+  document.addEventListener('click',event=>{if(event.target.closest?.('[data-vrcrp-chat-back],[data-vrcrp-page-back]')&&window.__vrcrpBack?.()){event.preventDefault();event.stopImmediatePropagation();}},true);
   new MutationObserver(records=>{if(records.some(r=>r.type!=='attributes'||!r.attributeName.startsWith('data-vrcrp')))schedule();}).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['class','aria-label','data-vrcrp-chat'],characterData:true});
   window.addEventListener('popstate',schedule);window.addEventListener('resize',schedule);schedule();
 })();

@@ -49,6 +49,7 @@ jobs:
             build/app-tabs.png
             build/ux-*.json
             build/app-ux.png
+            build/navigation-*.json
             build/motion-*.json
             build/surfaces-*.json
             build/surfaces-*.png

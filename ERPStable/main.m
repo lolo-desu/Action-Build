@@ -11,7 +11,7 @@
 static BOOL ERPUsesSimulatorFixtures(void) {
 #if ERP_TESTING
     NSArray *args=NSProcessInfo.processInfo.arguments;
-    return [args containsObject:@"--verify-keyboard"] || [args containsObject:@"--verify-tabs"] || [args containsObject:@"--verify-ux"] || [args containsObject:@"--verify-motion"] || [args containsObject:@"--verify-surfaces"];
+    return [args containsObject:@"--verify-keyboard"] || [args containsObject:@"--verify-tabs"] || [args containsObject:@"--verify-ux"] || [args containsObject:@"--verify-motion"] || [args containsObject:@"--verify-surfaces"] || [args containsObject:@"--verify-navigation"];
 #else
     return NO;
 #endif
@@ -109,6 +109,8 @@ static UIView *ERPFocusedView(UIView *view) {
 @property(nonatomic) NSUInteger snapshotGeneration;
 @property(nonatomic) NSUInteger keyboardResizeGeneration;
 #if ERP_TESTING
+@property(nonatomic) NSTimeInterval verifyNavigationStarted;
+@property(nonatomic) BOOL verifyGestureBegan;
 @property(nonatomic) NSUInteger documentLoads;
 @property(nonatomic,strong) NSDictionary *surfaceWebState;
 #endif
@@ -223,7 +225,7 @@ static UIView *ERPFocusedView(UIView *view) {
         [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:path]]];
     } else if ([arguments containsObject:@"--verify-ux"]) {
         [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:18765/discover"]]];
-    } else if ([arguments containsObject:@"--verify-motion"]) {
+    } else if ([arguments containsObject:@"--verify-motion"] || [arguments containsObject:@"--verify-navigation"]) {
         [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:18765/matches"]]];
     } else if ([arguments containsObject:@"--verify-surfaces"]) {
         [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:18765/me?fixture=surfaces"]]];
@@ -350,14 +352,15 @@ static UIView *ERPFocusedView(UIView *view) {
     [self.web evaluateJavaScript:@"window.__vrcrpSiteCache?.clear()" completionHandler:nil];
 }
 - (void)updateBackAvailability {
-    self.edgeBack.enabled=(self.canGoBack||self.profileOverlay)&&(!self.keyboardVisible||self.editingProfile)&&(!self.websiteOverlay||self.profileOverlay)&&!self.textSelected;
+    // Focus/keyboard notifications must not cancel an active back recognizer.
+    if(self.edgeBack.state!=UIGestureRecognizerStateBegan&&self.edgeBack.state!=UIGestureRecognizerStateChanged)
+        self.edgeBack.enabled=(self.canGoBack||self.profileOverlay)&&(!self.websiteOverlay||self.profileOverlay)&&!self.textSelected;
     self.pullRefresh.enabled=self.refreshable&&!self.websiteOverlay&&!self.profileOverlay&&!self.keyboardVisible&&!self.textSelected&&!self.refreshing;
 }
 - (BOOL)canStartBackAtPoint:(CGPoint)point velocity:(CGPoint)velocity {
-    BOOL preview=self.profileOverlay?self.pageNavigation.canPreviewOverlay:self.pageNavigation.canPreviewParent;
-    if((!self.canGoBack&&!self.profileOverlay)||(self.keyboardVisible&&!self.editingProfile)||self.textSelected||(self.websiteOverlay&&!self.profileOverlay)||self.presentedViewController||self.web.loading||self.pageNavigation.transitioning||!preview||velocity.x<=fabs(velocity.y)*1.15)return NO;
+    if((!self.canGoBack&&!self.profileOverlay)||self.textSelected||(self.websiteOverlay&&!self.profileOverlay)||self.presentedViewController||self.pageNavigation.interactive||velocity.x<=fabs(velocity.y)*1.15)return NO;
     if(!CGRectContainsPoint(self.web.bounds,point))return NO;
-    if((self.viewingProfile||self.editingProfile||self.profileOverlay)&&point.x<=24)return YES;
+    if(point.x<=24)return YES;
     for(id zone in self.horizontalZones)if(CGRectContainsPoint(VRRect(zone),point))return NO;
     return YES;
 }
@@ -371,11 +374,12 @@ static UIView *ERPFocusedView(UIView *view) {
 - (void)edgeBack:(UIPanGestureRecognizer *)gesture {
     CGFloat distance=MAX(0,[gesture translationInView:self.view].x);
     if (gesture.state==UIGestureRecognizerStateBegan) {
-        if(self.profileOverlay?[self.pageNavigation beginOverlayInteractive]:[self.pageNavigation beginInteractive]){if(self.editingProfile)[self.web endEditing:YES];[self haptic:@"selection"];[self.pageNavigation updateInteractive:distance];}
+        if(self.profileOverlay?[self.pageNavigation beginOverlayInteractive]:[self.pageNavigation beginInteractive]){[self haptic:@"selection"];[self.pageNavigation updateInteractive:distance];}
     }
     if (gesture.state==UIGestureRecognizerStateChanged) [self.pageNavigation updateInteractive:distance];
     if (gesture.state==UIGestureRecognizerStateEnded || gesture.state==UIGestureRecognizerStateCancelled) {
         [self.pageNavigation finishInteractive:distance velocity:[gesture velocityInView:self.view].x cancelled:gesture.state==UIGestureRecognizerStateCancelled];
+        [self updateBackAvailability];
     }
 }
 - (BOOL)prefersStatusBarHidden { return NO; }
@@ -398,7 +402,7 @@ static UIView *ERPFocusedView(UIView *view) {
     self.webBottomConstraint.constant = -height;
     NSTimeInterval duration = [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
     UIViewAnimationOptions curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] integerValue] << 16;
-    [UIView animateWithDuration:duration delay:0 options:curve | UIViewAnimationOptionBeginFromCurrentState
+    [UIView animateWithDuration:duration delay:0 options:curve | UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
         animations:^{ [self.view layoutIfNeeded]; }
         completion:^(BOOL finished) { [self syncViewport:YES]; if(resizeGeneration==self.keyboardResizeGeneration)[self.web evaluateJavaScript:@"window.__vrcrpDidResizeViewport?.()" completionHandler:nil]; }];
 }
@@ -439,6 +443,7 @@ static UIView *ERPFocusedView(UIView *view) {
         [NSProcessInfo.processInfo.arguments containsObject:@"--verify-ux"] ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--verify-motion"] ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"] ||
+        [NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"] ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--preview-login"]) return;
 #endif
     if(self.askedForNotifications)return; self.askedForNotifications=YES;
@@ -464,6 +469,10 @@ static UIView *ERPFocusedView(UIView *view) {
     NSDictionary *body = message.body;
     if ([message.name isEqualToString:@"erpNativeApp"]) {
         NSString *kind=body[@"kind"];
+        NSString *owner=body[@"entryKey"];
+        if([owner isKindOfClass:NSString.class]&&self.pageNavigation.currentKey.length&&
+           ![kind isEqual:@"route"]&&![kind isEqual:@"willNavigate"]&&
+           ![owner isEqual:self.pageNavigation.currentKey])return;
         if ([kind isEqualToString:@"ready"]) {
             [self contentReady]; [self captureSnapshot]; [self openPendingChat];
             [self.web evaluateJavaScript:UIApplication.sharedApplication.applicationState==UIApplicationStateActive?@"window.__vrcrpAppActive?.(true)":@"window.__vrcrpAppActive?.(false)" completionHandler:nil];
@@ -517,6 +526,9 @@ static UIView *ERPFocusedView(UIView *view) {
         else if ([kind isEqualToString:@"route"]) {
             NSString *path=body[@"path"];
             if (![path isKindOfClass:NSString.class] || ![path hasPrefix:@"/"] || path.length>500) return;
+            if(![body[@"entryKey"] isEqual:self.pageNavigation.currentKey]) {
+                self.horizontalZones=@[];self.textSelected=NO;self.websiteOverlay=NO;self.profileOverlay=NO;
+            }
             self.routeShowsTabs=[body[@"showTabs"] isEqual:@YES];if(!self.routeShowsTabs)self.bottomNav.hidden=YES;
             self.chatNotifications.activePath=path;
             self.editingProfile=[path hasPrefix:@"/profile/edit"];
@@ -595,6 +607,7 @@ static UIView *ERPFocusedView(UIView *view) {
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"]) [self verifyKeyboardSequence];
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-tabs"]) [self verifyTabsWhenReady:0];
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"]) [self verifySurfaces];
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"]) [self verifyNavigationSequence];
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-ux"]) [self verifyUXSequence];
     if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-motion"]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC),dispatch_get_main_queue(),^{[self captureMotion:@"root"];});
@@ -681,10 +694,11 @@ static UIView *ERPFocusedView(UIView *view) {
     condition=[condition stringByReplacingOccurrencesOfString:@"NATIVE_NAV_TOP" withString:[NSString stringWithFormat:@"%.3f",self.bottomNav.frame.origin.y-self.web.frame.origin.y]];
     void (^check)(id,NSError *)=^(id result,NSError *error){
         if(!error&&[result isEqual:@YES]&&(!native||native())){
-            dispatch_block_t next=^{dispatch_after(dispatch_time(DISPATCH_TIME_NOW,300*NSEC_PER_MSEC),dispatch_get_main_queue(),^{[self runVerifySteps:steps index:index+1 deadline:0];});};
+            dispatch_block_t next=^{dispatch_after(dispatch_time(DISPATCH_TIME_NOW,([NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"]?0:300)*NSEC_PER_MSEC),dispatch_get_main_queue(),^{[self runVerifySteps:steps index:index+1 deadline:0];});};
             NSString *phase=step[@"phase"];
             if(!phase.length){next();return;}
-            if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"])[self captureSurface:phase completion:next];
+            if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"])[self captureNavigation:phase completion:next];
+            else if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"])[self captureSurface:phase completion:next];
             else if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"])[self captureLayout:phase completion:next];
             else[self captureUX:phase completion:next];
             return;
@@ -692,7 +706,7 @@ static UIView *ERPFocusedView(UIView *view) {
         if(NSDate.timeIntervalSinceReferenceDate>=deadline){
             NSString *failure=[NSString stringWithFormat:@"Timed out at %@, condition %@, error %@",step[@"phase"]?:@(index),condition,error.localizedDescription?:@"none"];NSLog(@"%@",failure);
             NSDictionary *report=@{@"error":failure};
-            NSString *file=[NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"]?@"surfaces-completed.json":[NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"]?@"layout-reopened.json":@"ux-dark.json";
+            NSString *file=[NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"]?@"navigation-completed.json":[NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"]?@"surfaces-completed.json":[NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"]?@"layout-reopened.json":@"ux-dark.json";
             NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
             [[NSJSONSerialization dataWithJSONObject:report options:0 error:nil] writeToURL:[directory URLByAppendingPathComponent:file] atomically:YES];return;
         }
@@ -710,6 +724,35 @@ static UIView *ERPFocusedView(UIView *view) {
         step(@"first",visible,^{[self verifyJavaScript:@"document.querySelector('textarea').focus()"];},^BOOL(void){return self.keyboardVisible;}),
         step(@"",ready,^{[self verifyJavaScript:@"document.activeElement.blur()"];},^BOOL(void){return !self.keyboardVisible;}),
         step(@"reopened",visible,^{[self verifyJavaScript:@"document.querySelector('textarea').focus()"];},^BOOL(void){return self.keyboardVisible;})
+    ];[self runVerifySteps:steps index:0 deadline:0];
+}
+- (void)captureNavigation:(NSString *)phase completion:(dispatch_block_t)done {
+    NSMutableDictionary *data=[@{@"phase":phase,@"elapsed":@(NSDate.timeIntervalSinceReferenceDate-self.verifyNavigationStarted),@"keyboard":@(self.keyboardVisible),@"backEnabled":@(self.edgeBack.enabled),@"backAllowed":@([self canStartBackAtPoint:CGPointMake(12,180) velocity:CGPointMake(700,0)]),@"began":@(self.verifyGestureBegan),@"previewCached":@(self.pageNavigation.canPreviewParent),@"transitioning":@(self.pageNavigation.transitioning),@"interactive":@(self.pageNavigation.interactive),@"webEnabled":@(self.web.userInteractionEnabled),@"alpha":@(self.web.alpha),@"translation":@(self.web.transform.tx),@"documentLoads":@(self.documentLoads)} mutableCopy];
+    [self.web evaluateJavaScript:@"({path:location.pathname,index:history.state?.idx,draft:document.querySelector('textarea')?.value||'',focused:document.activeElement===document.querySelector('textarea'),cycles:window.navigationCycles||0})" completionHandler:^(id result,NSError *error){
+        if([result isKindOfClass:NSDictionary.class])[data addEntriesFromDictionary:result];if(error)data[@"error"]=error.localizedDescription;
+        NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+        [[NSJSONSerialization dataWithJSONObject:data options:NSJSONWritingPrettyPrinted error:nil] writeToURL:[directory URLByAppendingPathComponent:[NSString stringWithFormat:@"navigation-%@.json",phase]] atomically:YES];if(done)done();
+    }];
+}
+- (void)verifyNavigationSequence {
+    NSDictionary *(^step)(NSString *,NSString *,dispatch_block_t,BOOL(^)(void))=^(NSString *phase,NSString *condition,dispatch_block_t action,BOOL(^native)(void)){return @{@"phase":phase,@"condition":condition,@"action":[action copy],@"native":[native copy]};};
+    BOOL(^stable)(void)=^BOOL(void){return !self.pageNavigation.transitioning;};
+    dispatch_block_t begin=^{self.verifyGestureBegan=[self.pageNavigation beginInteractive];[self.pageNavigation updateInteractive:self.web.bounds.size.width*.45];};
+    NSArray *steps=@[
+        step(@"",@"!!window.__fixtureOpen&&location.pathname==='/matches'",^{},^BOOL(void){return !self.pageNavigation.transitioning&&!self.bottomNav.hidden;}),
+        step(@"cold-entry",@"location.pathname==='/matches/thread'",^{[self.pageNavigation clear];self.verifyNavigationStarted=NSDate.timeIntervalSinceReferenceDate;[self verifyJavaScript:@"__fixtureOpen('/matches/thread');document.querySelector('textarea').value='快速返回草稿'"];},^BOOL(void){return self.canGoBack&&[self canStartBackAtPoint:CGPointMake(12,180) velocity:CGPointMake(700,0)];}),
+        step(@"interrupted-push",@"location.pathname==='/matches/thread'",begin,^BOOL(void){return self.verifyGestureBegan&&self.pageNavigation.interactive;}),
+        step(@"cancelled",@"location.pathname==='/matches/thread'&&document.querySelector('textarea').value==='快速返回草稿'",^{[self.pageNavigation finishInteractive:self.web.bounds.size.width*.45 velocity:-700 cancelled:NO];},stable),
+        step(@"",@"document.activeElement===document.querySelector('textarea')",^{[self verifyJavaScript:@"document.querySelector('textarea').focus()"];},^BOOL(void){return self.keyboardVisible;}),
+        step(@"keyboard-preview",@"document.activeElement===document.querySelector('textarea')",begin,^BOOL(void){return self.verifyGestureBegan&&self.keyboardVisible&&self.pageNavigation.interactive;}),
+        step(@"keyboard-cancel",@"document.activeElement===document.querySelector('textarea')",^{[self.pageNavigation finishInteractive:self.web.bounds.size.width*.45 velocity:-700 cancelled:NO];},^BOOL(void){return self.keyboardVisible&&!self.pageNavigation.transitioning;}),
+        step(@"keyboard-return",@"location.pathname==='/matches'",^{self.verifyNavigationStarted=NSDate.timeIntervalSinceReferenceDate;begin();[self.pageNavigation finishInteractive:self.web.bounds.size.width*.6 velocity:900 cancelled:NO];},^BOOL(void){return !self.keyboardVisible&&!self.pageNavigation.transitioning;}),
+        step(@"reentered",@"location.pathname==='/matches/thread'&&document.querySelector('textarea').value==='快速返回草稿'",^{[self verifyJavaScript:@"__fixtureOpen('/matches/thread')"];},^BOOL(void){return self.canGoBack&&self.edgeBack.enabled;}),
+        step(@"",@"document.activeElement===document.querySelector('textarea')",^{[self verifyJavaScript:@"document.querySelector('textarea').focus()"];},^BOOL(void){return self.keyboardVisible;}),
+        step(@"dismissed-keyboard",@"document.activeElement!==document.querySelector('textarea')",^{[self verifyJavaScript:@"document.activeElement.blur()"];},^BOOL(void){return !self.keyboardVisible&&[self canStartBackAtPoint:CGPointMake(12,180) velocity:CGPointMake(700,0)];}),
+        step(@"nested-return",@"location.pathname==='/matches'&&history.state.idx===0",^{self.verifyNavigationStarted=NSDate.timeIntervalSinceReferenceDate;[self verifyJavaScript:@"__fixtureOpen('/u/peer');__fixtureOpen('/posts/detail');__vrcrpPageBack();__vrcrpPageBack();__vrcrpPageBack()"];},^BOOL(void){return !self.canGoBack&&!self.pageNavigation.transitioning;}),
+        step(@"loading-return",@"location.pathname==='/matches'",^{self.verifyNavigationStarted=NSDate.timeIntervalSinceReferenceDate;[self verifyJavaScript:@"__fixtureOpen('/u/loading');document.getElementById('main').innerHTML='<div class=animate-spin>Loading</div>';__vrcrpPageBack()"];},^BOOL(void){return !self.canGoBack&&!self.pageNavigation.transitioning;}),
+        step(@"completed",@"location.pathname==='/matches'&&window.navigationCycles===10",^{[self verifyJavaScript:@"(async()=>{window.navigationCycles=0;for(let i=0;i<10;i++){__fixtureOpen('/matches/thread');await new Promise(resolve=>{window.addEventListener('popstate',resolve,{once:true});__vrcrpPageBack()});navigationCycles++}})()"];},^BOOL(void){return !self.canGoBack&&!self.keyboardVisible&&!self.pageNavigation.transitioning&&self.web.userInteractionEnabled;})
     ];[self runVerifySteps:steps index:0 deadline:0];
 }
 - (void)verifyUXSequence {

@@ -79,7 +79,8 @@
     }];
 }
 - (void)setRunning:(BOOL)value {
-    self.transitioning=value;self.web.userInteractionEnabled=!value;
+    // Animation is presentation, never a lock on the router or its controls.
+    self.transitioning=value;self.web.userInteractionEnabled=YES;
     if(self.onTransitionChange)self.onTransitionChange(value);
 }
 - (void)shadow:(BOOL)visible {
@@ -93,6 +94,7 @@
 }
 - (void)complete {
     self.generation++;self.waitingReturn=NO;self.interactive=NO;self.progress=0;
+    [self.web.layer removeAllAnimations];[self.underlay.layer removeAllAnimations];[self.outgoing.layer removeAllAnimations];[self.shade.layer removeAllAnimations];
     self.web.transform=CGAffineTransformIdentity;self.web.alpha=1;[self shadow:NO];
     self.underlay.hidden=YES;self.underlay.image=nil;self.underlay.transform=CGAffineTransformIdentity;
     self.outgoing.hidden=YES;self.outgoing.image=nil;self.outgoing.transform=CGAffineTransformIdentity;self.previewKey=nil;
@@ -102,8 +104,10 @@
     if(!key.length)return;
     NSString *oldKey=self.currentKey;VRPageImage *old=[self.images objectForKey:oldKey];
     self.currentKey=key;self.parentKey=parent;self.currentPath=path;
-    if(self.waitingReturn||[oldKey isEqual:key])return;
+    if([oldKey isEqual:key])return;
+    BOOL returned=self.waitingReturn;
     if(self.transitioning)[self complete];
+    if(returned)return; // The finger already supplied this pop animation.
     if(!oldKey.length||[oldKey isEqual:key]||[direction isEqual:@"none"]||[direction isEqual:@"tab"]||UIAccessibilityIsReduceMotionEnabled())return;
     [self layout];NSUInteger generation=++self.generation;CGFloat width=self.web.bounds.size.width;
     self.routeReady=NO;self.animationDone=NO;[self setRunning:YES];
@@ -114,19 +118,18 @@
         self.outgoing.image=warm.image;self.outgoing.hidden=warm==nil;
         self.outgoing.transform=CGAffineTransformMakeTranslation(width,0);
         self.web.transform=CGAffineTransformMakeTranslation(width,0);[self shadow:YES];
-        [UIView animateWithDuration:.32 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        [UIView animateWithDuration:.24 delay:0 options:UIViewAnimationOptionCurveEaseOut|UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionBeginFromCurrentState animations:^{
             self.web.transform=CGAffineTransformIdentity;self.outgoing.transform=CGAffineTransformIdentity;self.underlay.transform=CGAffineTransformMakeTranslation(-width*.27,0);self.shade.alpha=.2;
-        } completion:^(BOOL finished){if(generation!=self.generation)return;self.animationDone=YES;if(self.routeReady||!self.outgoing.image)[self complete];}];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,1500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{if(generation==self.generation)[self complete];});
+        } completion:^(BOOL finished){if(generation!=self.generation)return;self.animationDone=YES;[self complete];}];
     } else {
         VRPageImage *target=[self.images objectForKey:key]?:[self.images objectForKey:self.paths[path]?:@""];
         self.underlay.image=target.image;self.underlay.hidden=target==nil;self.previewKey=key;
         self.underlay.transform=CGAffineTransformMakeTranslation(-width*.27,0);self.shade.alpha=.2;
-        self.outgoing.image=old.image;self.outgoing.hidden=old==nil;self.web.alpha=target?0:1;
-        [UIView animateWithDuration:.3 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        self.outgoing.image=old.image;self.outgoing.hidden=old==nil;
+        // Keep WebKit visible so painting, focus and JS acknowledgements run.
+        [UIView animateWithDuration:.22 delay:0 options:UIViewAnimationOptionCurveEaseOut|UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionBeginFromCurrentState animations:^{
             self.outgoing.transform=CGAffineTransformMakeTranslation(width,0);self.underlay.transform=CGAffineTransformIdentity;self.shade.alpha=0;
-        } completion:^(BOOL finished){if(generation!=self.generation)return;self.animationDone=YES;if(self.routeReady)[self complete];}];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,1500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{if(generation==self.generation)[self complete];});
+        } completion:^(BOOL finished){if(generation!=self.generation)return;self.animationDone=YES;[self complete];}];
     }
 }
 - (void)settled:(NSString *)key {
@@ -138,10 +141,13 @@
 }
 - (BOOL)beginOverlayInteractive { return [self beginInteractiveKey:self.currentKey]; }
 - (BOOL)beginInteractiveKey:(NSString *)key {
-    VRPageImage *target=[self.images objectForKey:key];if(self.transitioning||!target)return NO;
+    if(!key.length||self.interactive||self.waitingReturn)return NO;
+    if(self.transitioning)[self complete];
+    VRPageImage *target=[self.images objectForKey:key];
     [self layout];self.generation++;
-    self.underlay.image=target.image;self.underlay.hidden=NO;self.previewKey=key;
-    self.fromHeader=self.header.backgroundColor;self.toHeader=target.header;
+    // A cold/evicted snapshot reduces preview detail, never back availability.
+    self.underlay.image=target.image;self.underlay.backgroundColor=target.header?:self.header.backgroundColor;self.underlay.hidden=NO;self.previewKey=key;
+    self.fromHeader=self.header.backgroundColor;self.toHeader=target.header?:self.fromHeader;
     self.interactive=YES;self.waitingReturn=NO;self.animationDone=NO;self.routeReady=NO;self.progress=0;
     [self shadow:YES];[self setRunning:YES];[self updateInteractive:0];return YES;
 }
@@ -155,13 +161,14 @@
     BOOL commit=!cancelled&&velocity>-150&&(distance+velocity*.16>width*.36 || (velocity>700&&distance>12));
     NSUInteger generation=self.generation;CGFloat endpoint=commit?1:0;
     NSTimeInterval duration=MAX(.12,MIN(.32,.3*fabs(endpoint-self.progress)));
-    [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionCurveEaseOut|UIViewAnimationOptionBeginFromCurrentState animations:^{[self updateInteractive:endpoint*width];}
+    [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionCurveEaseOut|UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction animations:^{[self updateInteractive:endpoint*width];}
       completion:^(BOOL finished){
         if(generation!=self.generation)return;
         if(!commit){[self headerAtProgress:0];[self complete];return;}
-        self.interactive=NO;self.waitingReturn=YES;self.animationDone=YES;self.web.alpha=0;self.web.transform=CGAffineTransformIdentity;
+        self.interactive=NO;self.waitingReturn=YES;self.animationDone=YES;self.web.transform=CGAffineTransformIdentity;
+        self.outgoing.image=self.underlay.image;self.outgoing.transform=CGAffineTransformIdentity;self.outgoing.hidden=self.outgoing.image==nil;self.underlay.hidden=YES;
         if(self.onRequestBack)self.onRequestBack();else[self abortReturn];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,1500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{if(generation==self.generation&&self.waitingReturn)[self complete];});
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,350*NSEC_PER_MSEC),dispatch_get_main_queue(),^{if(generation==self.generation&&self.waitingReturn)[self complete];});
       }];
 }
 - (void)abortReturn { if(self.fromHeader&&self.onHeaderColor)self.onHeaderColor(self.fromHeader);[self complete]; }
