@@ -46,7 +46,23 @@ DATA_PATH="$(xcrun simctl get_app_container "$SIM_ID" local.erp.stable data)"
 wait_for_report() {
   local report="$1"
   for attempt in {1..90}; do
-    if test -f "$DATA_PATH/Documents/$report"; then return 0; fi
+    if test -f "$DATA_PATH/Documents/$report"; then
+      if python3 - "$DATA_PATH/Documents/$report" <<'PYERROR'
+import json,sys
+data=json.load(open(sys.argv[1]))
+if 'error' in data:
+ print(data['error'])
+ sys.exit(0)
+sys.exit(1)
+PYERROR
+      then
+        cp "$DATA_PATH/Documents/$report" "$ROOT/build/$report"
+        xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/simulator-timeout.png" || true
+        xcrun simctl spawn "$SIM_ID" log show --last 2m --style compact --predicate 'process == "ERPStable"' > "$ROOT/build/simulator-timeout.log" || true
+        return 1
+      fi
+      return 0
+    fi
     sleep 2
   done
   xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/simulator-timeout.png" || true

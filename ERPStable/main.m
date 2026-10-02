@@ -110,6 +110,7 @@ static UIView *ERPFocusedView(UIView *view) {
 @property(nonatomic) NSUInteger keyboardResizeGeneration;
 #if ERP_TESTING
 @property(nonatomic) NSUInteger documentLoads;
+@property(nonatomic,strong) NSDictionary *surfaceWebState;
 #endif
 @end
 
@@ -676,7 +677,9 @@ static UIView *ERPFocusedView(UIView *view) {
     NSDictionary *step=steps[index];
     if(deadline==0){dispatch_block_t action=step[@"action"];if(action)action();deadline=NSDate.timeIntervalSinceReferenceDate+35;}
     NSString *condition=step[@"condition"]?:@"true";BOOL (^native)(void)=step[@"native"];
-    [self.web evaluateJavaScript:condition completionHandler:^(id result,NSError *error){
+    condition=[condition stringByReplacingOccurrencesOfString:@"NATIVE_HEIGHT" withString:[NSString stringWithFormat:@"%.3f",self.web.bounds.size.height]];
+    condition=[condition stringByReplacingOccurrencesOfString:@"NATIVE_NAV_TOP" withString:[NSString stringWithFormat:@"%.3f",self.bottomNav.frame.origin.y-self.web.frame.origin.y]];
+    void (^check)(id,NSError *)=^(id result,NSError *error){
         if(!error&&[result isEqual:@YES]&&(!native||native())){
             dispatch_block_t next=^{dispatch_after(dispatch_time(DISPATCH_TIME_NOW,300*NSEC_PER_MSEC),dispatch_get_main_queue(),^{[self runVerifySteps:steps index:index+1 deadline:0];});};
             NSString *phase=step[@"phase"];
@@ -694,12 +697,14 @@ static UIView *ERPFocusedView(UIView *view) {
             [[NSJSONSerialization dataWithJSONObject:report options:0 error:nil] writeToURL:[directory URLByAppendingPathComponent:file] atomically:YES];return;
         }
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,120*NSEC_PER_MSEC),dispatch_get_main_queue(),^{[self runVerifySteps:steps index:index deadline:deadline];});
-    }];
+    };
+    if([condition isEqual:@"true"])check(@YES,nil);
+    else[self.web evaluateJavaScript:condition completionHandler:check];
 }
 - (void)verifyKeyboardSequence {
     NSDictionary *(^step)(NSString *,NSString *,dispatch_block_t,BOOL(^)(void))=^(NSString *phase,NSString *condition,dispatch_block_t action,BOOL(^native)(void)){return @{@"phase":phase,@"condition":condition,@"action":[action copy],@"native":[native copy]};};
-    NSString *ready=@"(() => {const p=document.querySelector('.messages'),v=parseFloat(document.documentElement.style.getPropertyValue('--vrcrp-viewport-height'));return !!p&&p.scrollHeight-p.scrollTop-p.clientHeight<2&&Math.abs(visualViewport.height-v)<1})()";
-    NSString *visible=@"(() => {const p=document.querySelector('.messages'),t=document.querySelector('textarea'),last=document.querySelector('[data-last-message]'),v=parseFloat(document.documentElement.style.getPropertyValue('--vrcrp-viewport-height'));return document.activeElement===t&&Math.abs(visualViewport.height-v)<1&&p.scrollHeight-p.scrollTop-p.clientHeight<2&&last.getBoundingClientRect().bottom<=p.getBoundingClientRect().bottom+1&&t.getBoundingClientRect().bottom<=v})()";
+    NSString *ready=@"(() => {const p=document.querySelector('.messages'),v=parseFloat(document.documentElement.style.getPropertyValue('--vrcrp-viewport-height'));return !!p&&p.scrollHeight-p.scrollTop-p.clientHeight<2&&Math.abs(visualViewport.height-NATIVE_HEIGHT)<1&&Math.abs(v-NATIVE_HEIGHT)<1})()";
+    NSString *visible=@"(() => {const p=document.querySelector('.messages'),t=document.querySelector('textarea'),last=document.querySelector('[data-last-message]'),v=parseFloat(document.documentElement.style.getPropertyValue('--vrcrp-viewport-height'));return document.activeElement===t&&Math.abs(visualViewport.height-NATIVE_HEIGHT)<1&&Math.abs(v-NATIVE_HEIGHT)<1&&p.scrollHeight-p.scrollTop-p.clientHeight<2&&last.getBoundingClientRect().bottom<=p.getBoundingClientRect().bottom+1&&t.getBoundingClientRect().bottom<=v})()";
     NSArray *steps=@[
         step(@"",ready,^{},^BOOL(void){return !self.keyboardVisible;}),
         step(@"first",visible,^{[self verifyJavaScript:@"document.querySelector('textarea').focus()"];},^BOOL(void){return self.keyboardVisible;}),
@@ -709,13 +714,14 @@ static UIView *ERPFocusedView(UIView *view) {
 }
 - (void)verifyUXSequence {
     NSDictionary *(^step)(NSString *,NSString *,dispatch_block_t,BOOL(^)(void))=^(NSString *phase,NSString *condition,dispatch_block_t action,BOOL(^native)(void)){return @{@"phase":phase,@"condition":condition,@"action":[action copy],@"native":[native copy]};};
+    NSString *rootReady=@"location.pathname==='/discover'&&Math.abs(parseFloat(document.documentElement.style.getPropertyValue('--vrcrp-viewport-height'))-NATIVE_HEIGHT)<1&&document.querySelectorAll('.act').length===3&&[...document.querySelectorAll('.act')].every(b=>b.getBoundingClientRect().bottom<=NATIVE_NAV_TOP-10)";
     NSArray *steps=@[
-        step(@"discover",@"location.pathname==='/discover'",^{},^BOOL(void){return !self.pageNavigation.transitioning&&self.pageNavigation.currentKey.length>0;}),
+        step(@"discover",rootReady,^{},^BOOL(void){return !self.pageNavigation.transitioning&&!self.bottomNav.hidden&&self.bottomNav.buttons.count==5;}),
         step(@"",@"location.pathname==='/matches/thread'&&!!document.querySelector('textarea')",^{[self verifyJavaScript:@"__fixtureOpen('/matches/thread')"];},^BOOL(void){return !self.pageNavigation.transitioning;}),
         step(@"chat",@"document.activeElement===document.querySelector('textarea')",^{[self verifyJavaScript:@"document.querySelector('textarea').focus()"];},^BOOL(void){return self.keyboardVisible&&!self.pageNavigation.transitioning;}),
         step(@"profile",@"location.pathname==='/u/peer'",^{[self verifyJavaScript:@"document.activeElement.blur();__fixtureOpen('/u/peer')"];},^BOOL(void){return !self.keyboardVisible&&!self.pageNavigation.transitioning;}),
         step(@"chat-return",@"location.pathname==='/matches/thread'",^{[self verifyJavaScript:@"__vrcrpBack()"];},^BOOL(void){return !self.pageNavigation.transitioning;}),
-        step(@"restored",@"location.pathname==='/discover'",^{[self verifyJavaScript:@"__vrcrpBack()"];},^BOOL(void){return !self.pageNavigation.transitioning&&!self.bottomNav.hidden;}),
+        step(@"restored",rootReady,^{[self verifyJavaScript:@"__vrcrpBack()"];},^BOOL(void){return !self.pageNavigation.transitioning&&!self.bottomNav.hidden;}),
         step(@"dark",@"getComputedStyle(document.querySelector('.app-top')).backgroundColor==='rgb(24, 28, 35)'",^{[self verifyJavaScript:@"__fixtureDark()"];},^BOOL(void){return [self verifyHeaderRed:24.0/255];})
     ];[self runVerifySteps:steps index:0 deadline:0];
 }
@@ -772,11 +778,20 @@ static UIView *ERPFocusedView(UIView *view) {
         NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         [UIImagePNGRepresentation(image) writeToURL:[directory URLByAppendingPathComponent:[NSString stringWithFormat:@"surfaces-%@.png",phase]] atomically:YES];
     }
-    [self.web evaluateJavaScript:@"({path:location.pathname,index:history.state?.idx,historyLength:history.length,globalHeaderHidden:getComputedStyle(document.querySelector('.app-top')).display==='none',chatHeaderTop:document.querySelector('[data-vrcrp-chat-bar]')?.getBoundingClientRect().top ?? null,unread:document.querySelector('[data-vrcrp-unread]')?.textContent ?? null,backButton:!!document.querySelector('[data-vrcrp-page-back]'),refreshes:window.fixtureRefreshes,installHidden:!!navigator.standalone,mainURL:location.href})" completionHandler:^(id result,NSError *error){
+    void (^save)(id,NSError *)=^(id result,NSError *error){
         if([result isKindOfClass:NSDictionary.class])[data addEntriesFromDictionary:result];if(error)data[@"error"]=error.localizedDescription;
         NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         [[NSJSONSerialization dataWithJSONObject:data options:NSJSONWritingPrettyPrinted error:nil] writeToURL:[directory URLByAppendingPathComponent:[NSString stringWithFormat:@"surfaces-%@.json",phase]] atomically:YES];
         if(done)done();
+    };
+    if(data[@"external"]){
+        // The covered app page can suspend JS until the full-screen browser
+        // closes. Inspect its live native URL without blocking on that page.
+        NSMutableDictionary *state=[self.surfaceWebState mutableCopy]?:[NSMutableDictionary new];
+        state[@"mainURL"]=self.web.URL.absoluteString?:@"";state[@"path"]=self.web.URL.path?:@"";save(state,nil);return;
+    }
+    [self.web evaluateJavaScript:@"({path:location.pathname,index:history.state?.idx,historyLength:history.length,globalHeaderHidden:getComputedStyle(document.querySelector('.app-top')).display==='none',chatHeaderTop:document.querySelector('[data-vrcrp-chat-bar]')?.getBoundingClientRect().top ?? null,unread:document.querySelector('[data-vrcrp-unread]')?.textContent ?? null,backButton:!!document.querySelector('[data-vrcrp-page-back]'),refreshes:window.fixtureRefreshes,installHidden:!!navigator.standalone,mainURL:location.href})" completionHandler:^(id result,NSError *error){
+        if([result isKindOfClass:NSDictionary.class])self.surfaceWebState=result;save(result,error);
     }];
 }
 - (void)captureLayout:(NSString *)phase {
