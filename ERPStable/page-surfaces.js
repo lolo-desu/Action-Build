@@ -36,11 +36,11 @@
   }
   window.__vrcrpChatUnread=count=>{if(Number.isSafeInteger(count)&&count>=0&&count<=100000){unread=count;updateUnread();}};
   function pageBack(main){
-    if(!editing()&&!/^\/u\/[^/]+/.test(location.pathname))return;
     const heading=main?.querySelector('h1');if(!heading)return;
     const group=heading.closest('.flex.items-center')||heading.parentElement.parentElement;
     const original=[...group.querySelectorAll('button')].find(b=>/^(返回|返回上一页|上一頁|返回上頁|back|go back)$/i.test((b.getAttribute('aria-label')||b.title||'').trim()));
     if(original){original.dataset.vrcrpPageBack='true';return;}
+    if(!editing()&&!/^\/u\/[^/]+/.test(location.pathname))return;
     if(main.querySelector('[data-vrcrp-page-back]'))return;
     const button=document.createElement('button');button.type='button';button.dataset.vrcrpPageBack='true';button.setAttribute('aria-label','返回');button.innerHTML=backIcon;
     button.addEventListener('click',()=>{if(!window.__vrcrpBack?.())window.__vrcrpOpenRoot?.('/me');});

@@ -33,6 +33,12 @@ with sync_playwright() as p:
     page.evaluate("__fixtureOpen('/matches/thread');__fixtureOpen('/u/peer');__fixtureOpen('/posts/detail');__vrcrpPageBack();__vrcrpPageBack();__vrcrpPageBack()")
     page.wait_for_function("location.pathname==='/matches'&&history.state.idx===0",polling=20)
     assert not page.evaluate('__vrcrpPageBack()'),'back escaped the app root'
+    # Existing site heading buttons use the same serialization, including
+    # post/notification screens, rather than bypassing it with navigate(-1).
+    page.evaluate("__fixtureOpen('/matches/thread');__fixtureOpen('/u/peer');__fixtureOpen('/posts/detail');document.getElementById('main').innerHTML='<div class=\"flex items-center\"><button aria-label=\"返回\" onclick=\"history.back()\">返回</button><h1>帖子详情</h1></div>';__vrcrpRefreshSurface();document.querySelector('[data-vrcrp-page-back]').click();document.querySelector('[data-vrcrp-page-back]').click()")
+    page.wait_for_function("location.pathname==='/matches/thread'&&history.state.idx===1",polling=20)
+    page.evaluate('__vrcrpPageBack()')
+    page.wait_for_function("location.pathname==='/matches'",polling=20)
     # Returning with a focused textarea must save its value before blur.
     page.evaluate("__fixtureOpen('/matches/thread');document.querySelector('textarea').value='键盘草稿';document.querySelector('textarea').focus();__vrcrpPageBack()")
     page.wait_for_function("location.pathname==='/matches'",polling=20)
