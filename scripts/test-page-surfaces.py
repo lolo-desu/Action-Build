@@ -6,7 +6,7 @@ with sync_playwright() as p:
  browser=p.chromium.launch(executable_path=os.environ.get('CHROMIUM_PATH','/usr/bin/chromium'),args=['--no-sandbox'])
  page=browser.new_page(viewport={'width':393,'height':793},is_mobile=True,has_touch=True)
  page.add_init_script("window.nativeMessages=[];window.webkit={messageHandlers:{erpNativeApp:{postMessage:m=>nativeMessages.push(m)}}}")
- for name in ['page-surfaces','keyboard','app-experience']:page.add_init_script((root/'ERPStable'/f'{name}.js').read_text())
+ for name in ['page-surfaces','interaction','keyboard','app-experience']:page.add_init_script((root/'ERPStable'/f'{name}.js').read_text())
  page.route('https://erp.sex/**',lambda r:r.fulfill(body=fixture,content_type='text/html'));page.goto('https://erp.sex/me')
  page.wait_for_function("document.querySelector('[data-vrcrp-install]')")
  assert page.evaluate('navigator.standalone') is True
@@ -23,6 +23,11 @@ with sync_playwright() as p:
  page.evaluate("__surfaceOpen('/matches/thread')");page.wait_for_selector('[data-vrcrp-chat-bar]')
  assert not page.locator('.app-top').is_visible()
  assert page.locator('[data-vrcrp-chat-bar]').bounding_box()['y']==0
+ for width in [393,320,430,393]:
+  page.set_viewport_size({'width':width,'height':793})
+  page.wait_for_function("Math.abs(document.querySelector('[data-vrcrp-chat-bar]').getBoundingClientRect().left)<1&&Math.abs(document.querySelector('[data-vrcrp-chat-bar]').getBoundingClientRect().right-innerWidth)<1")
+ assert page.locator('#main').evaluate('e=>parseFloat(getComputedStyle(e).paddingBottom)')==6
+ assert page.evaluate("document.documentElement.matches('[data-no-ptr]')")
  page.evaluate('__vrcrpChatUnread(7)');assert page.locator('[data-vrcrp-unread]').inner_text()=='7'
  page.evaluate('__vrcrpChatUnread(100)');assert page.locator('[data-vrcrp-unread]').inner_text()=='99+'
  page.evaluate('__vrcrpChatUnread(0)');assert not page.locator('[data-vrcrp-unread]').is_visible()

@@ -37,7 +37,8 @@ phone=next(d for d in devices if d['name']=='iPhone 17 Pro')
 print(subprocess.check_output(['xcrun','simctl','create','vrcrp-web-check',phone['identifier'],runtime['identifier']],text=True).strip())
 PY
 )"
-trap 'kill "$FIXTURE_SERVER_PID" >/dev/null 2>&1 || true; xcrun simctl shutdown "$SIM_ID" >/dev/null 2>&1 || true' EXIT
+VIDEO_PID=""
+trap 'if test -n "$VIDEO_PID"; then kill -INT "$VIDEO_PID" >/dev/null 2>&1 || true; fi; kill "$FIXTURE_SERVER_PID" >/dev/null 2>&1 || true; xcrun simctl shutdown "$SIM_ID" >/dev/null 2>&1 || true' EXIT
 xcrun simctl boot "$SIM_ID"
 xcrun simctl bootstatus "$SIM_ID" -b
 xcrun simctl install "$SIM_ID" "$APP"
@@ -192,6 +193,16 @@ assert restored['path']=='/matches' and restored['index']==0 and restored['nativ
 print('PASS: UIKit nested page previews, finger tracking, reverse-velocity cancellation, draft retention, committed parent return and no document reload')
 PYMOTION
 xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/app-motion.png"
+xcrun simctl io "$SIM_ID" recordVideo --codec=h264 "$ROOT/build/handoff.mov" > "$ROOT/build/handoff-record.log" 2>&1 &
+VIDEO_PID=$!
+sleep 1
+xcrun simctl launch --terminate-running-process "$SIM_ID" local.erp.stable --verify-handoff
+wait_for_report handoff-completed.json
+kill -INT "$VIDEO_PID"
+wait "$VIDEO_PID" || true
+VIDEO_PID=""
+cp "$DATA_PATH/Documents/"handoff-*.json "$ROOT/build/"
+swift "$ROOT/scripts/check-handoff-video.swift" "$ROOT/build/handoff.mov" "$ROOT/build/handoff-video.json"
 xcrun simctl launch --terminate-running-process "$SIM_ID" local.erp.stable --verify-surfaces
 wait_for_report surfaces-completed.json
 cp "$DATA_PATH/Documents/"surfaces-*.json "$ROOT/build/"
@@ -208,6 +219,9 @@ entry,tabs=stages['edit-entry'],stages['edit-tabs']
 assert entry['backButton'] and entry['edgeBackAllowed'] and tabs['index']==entry['index'] and tabs['historyLength']==entry['historyLength'],stages
 assert stages['edit-keyboard']['keyboard'] and stages['edit-keyboard']['backEnabled'],stages['edit-keyboard']
 assert stages['edit-return']['path']=='/me' and stages['edit-return']['index']==0,stages['edit-return']
+assert stages['chat']['chatHeaderLeft']==0 and abs(stages['chat']['chatHeaderRight']-stages['chat']['viewportWidth'])<1,stages['chat']
+assert abs(float(stages['chat']['composerPadding'].removesuffix('px'))-6-stages['chat']['safeBottom'])<1,stages['chat']
+assert all(d['noWebsitePull'] and not d['systemRefreshControl'] for d in stages.values()),stages
 assert stages['chat']['globalHeaderHidden'] and stages['chat']['chatHeaderTop']==0 and stages['chat']['unread']=='7',stages['chat']
 assert stages['profile']['edgeBackAllowed'] and stages['profile']['backButton'] and stages['profile-return']['path']=='/matches/thread',stages
 pull=stages['pull'];assert pull['hintVisible'] and pull['hintText']=='松开刷新' and pull['hintTop']>=pull['headerHeight'] and not pull['bounce'] and pull['surfaceColor']==[1,1,1,1],pull

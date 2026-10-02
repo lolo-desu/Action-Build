@@ -24,6 +24,9 @@
   function apply() {
     queued = false;
     if (!document.head) return;
+    // The site's installed-app pull handler explicitly respects data-no-ptr.
+    // UIKit owns the single refresh hint and performs an in-place refetch.
+    document.documentElement.dataset.noPtr='true';
     let metas = [...document.querySelectorAll('meta[name="viewport" i]')];
     if (!metas.length) {
       const meta = document.createElement('meta');

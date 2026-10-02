@@ -11,7 +11,7 @@
 static BOOL ERPUsesSimulatorFixtures(void) {
 #if ERP_TESTING
     NSArray *args=NSProcessInfo.processInfo.arguments;
-    return [args containsObject:@"--verify-keyboard"] || [args containsObject:@"--verify-tabs"] || [args containsObject:@"--verify-ux"] || [args containsObject:@"--verify-motion"] || [args containsObject:@"--verify-surfaces"] || [args containsObject:@"--verify-navigation"];
+    return [args containsObject:@"--verify-keyboard"] || [args containsObject:@"--verify-tabs"] || [args containsObject:@"--verify-ux"] || [args containsObject:@"--verify-motion"] || [args containsObject:@"--verify-surfaces"] || [args containsObject:@"--verify-navigation"] || [args containsObject:@"--verify-handoff"];
 #else
     return NO;
 #endif
@@ -76,7 +76,6 @@ static UIView *ERPFocusedView(UIView *view) {
 @property(nonatomic, strong) UIActivityIndicatorView *spinner;
 @property(nonatomic, strong) UILabel *loadingCaption;
 @property(nonatomic, strong) UIButton *retryButton;
-@property(nonatomic, strong) UIRefreshControl *refreshControl;
 @property(nonatomic, strong) UIPanGestureRecognizer *edgeBack;
 @property(nonatomic, strong) UIPanGestureRecognizer *pullRefresh;
 @property(nonatomic, strong) UIView *refreshHint;
@@ -200,8 +199,6 @@ static UIView *ERPFocusedView(UIView *view) {
         [weakSelf haptic:@"selection"];
         [weakSelf.web evaluateJavaScript:[NSString stringWithFormat:@"window.__vrcrpActivateTab?.(%ld)",(long)slot] completionHandler:^(id result,NSError *error){if(error||![result isEqual:@YES])[weakSelf.bottomNav cancelPendingSelection];}];
     };
-    self.refreshControl=[UIRefreshControl new];
-    [self.refreshControl addTarget:self action:@selector(refreshPage:) forControlEvents:UIControlEventValueChanged];
     self.edgeBack=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(edgeBack:)];
     self.edgeBack.maximumNumberOfTouches=1; self.edgeBack.delegate=self; self.edgeBack.enabled=NO;
     [self.view addGestureRecognizer:self.edgeBack];
@@ -227,6 +224,8 @@ static UIView *ERPFocusedView(UIView *view) {
         [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:18765/discover"]]];
     } else if ([arguments containsObject:@"--verify-motion"] || [arguments containsObject:@"--verify-navigation"]) {
         [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:18765/matches"]]];
+    } else if ([arguments containsObject:@"--verify-handoff"]) {
+        [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:18765/matches?fixture=handoff"]]];
     } else if ([arguments containsObject:@"--verify-surfaces"]) {
         [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:18765/me?fixture=surfaces"]]];
     } else if ([arguments containsObject:@"--preview-login"]) {
@@ -265,7 +264,7 @@ static UIView *ERPFocusedView(UIView *view) {
         [stack.centerYAnchor constraintEqualToAnchor:self.loadingCover.centerYAnchor], [stack.widthAnchor constraintLessThanOrEqualToAnchor:self.loadingCover.widthAnchor multiplier:.8]]];
 }
 - (void)contentReady {
-    self.hasContent=YES; [self.refreshControl endRefreshing]; [self.spinner stopAnimating];
+    self.hasContent=YES;  [self.spinner stopAnimating];
     if (self.loadingCover.hidden) return;
     [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled()?0:.22 animations:^{ self.loadingCover.alpha=0; }
         completion:^(BOOL finished) { self.loadingCover.hidden=YES; }];
@@ -290,7 +289,7 @@ static UIView *ERPFocusedView(UIView *view) {
     [self.web evaluateJavaScript:[NSString stringWithFormat:@"window.__vrcrpPullSurface?.(%.2f)",space] completionHandler:nil];
 }
 - (void)finishRefresh {
-    self.refreshing=NO;self.refreshGeneration++;[self.refreshControl endRefreshing];[self showPullDistance:0];[self updateBackAvailability];
+    self.refreshing=NO;self.refreshGeneration++;[self showPullDistance:0];[self updateBackAvailability];
 }
 - (void)refreshPage:(id)sender {
     if(self.refreshing)return;[self haptic:@"light"];self.refreshing=YES;NSUInteger owner=++self.refreshGeneration;[self showPullDistance:88];
@@ -332,7 +331,7 @@ static UIView *ERPFocusedView(UIView *view) {
 - (void)captureSnapshot {
     NSUInteger generation=++self.snapshotGeneration;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC/3),dispatch_get_main_queue(),^{
-        if (generation!=self.snapshotGeneration || self.keyboardVisible || self.presentedViewController || self.websiteOverlay || self.profileOverlay || self.pageNavigation.transitioning) return;
+        if (generation!=self.snapshotGeneration || self.keyboardVisible || self.presentedViewController || self.websiteOverlay || self.profileOverlay || (self.pageNavigation.transitioning||self.pageNavigation.handoff)) return;
         [self.pageNavigation capture];
     });
 }
@@ -450,6 +449,7 @@ static UIView *ERPFocusedView(UIView *view) {
         [NSProcessInfo.processInfo.arguments containsObject:@"--verify-motion"] ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"] ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"] ||
+        [NSProcessInfo.processInfo.arguments containsObject:@"--verify-handoff"] ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--preview-login"]) return;
 #endif
     if(self.askedForNotifications)return; self.askedForNotifications=YES;
@@ -487,7 +487,6 @@ static UIView *ERPFocusedView(UIView *view) {
         } else if ([kind isEqualToString:@"navigation"]) {
             self.websiteOverlay=[body[@"overlay"] isEqual:@YES];
             [self updateBackAvailability];
-            self.refreshControl.enabled=!self.websiteOverlay;
             if ([body[@"items"] isKindOfClass:NSArray.class] && [self.bottomNav applyModel:body webFrame:self.web.frame]) {
                 self.navModelVisible=[body[@"visible"] isEqual:@YES];[self restoreNavigation];
                 for (NSDictionary *item in body[@"items"]) if ([item[@"selected"] boolValue] && [item[@"color"] isKindOfClass:NSArray.class]) {
@@ -515,6 +514,8 @@ static UIView *ERPFocusedView(UIView *view) {
             [NSUserDefaults.standardUserDefaults setObject:@[@(red),@(green),@(blue),@1] forKey:@"VRHeaderSurface"];
         } else if ([kind isEqual:@"willNavigate"]) {
             if(!self.keyboardVisible&&!self.websiteOverlay&&!self.profileOverlay&&!self.pageNavigation.transitioning)[self.pageNavigation capture];
+        } else if ([kind isEqual:@"pagePainted"]) {
+            NSString *key=body[@"entryKey"];if([key isKindOfClass:NSString.class]&&key.length<=180){[self.pageNavigation painted:key];[self captureSnapshot];}
         } else if ([kind isEqual:@"routeSettled"]) {
             NSString *key=body[@"entryKey"];
             if([key isKindOfClass:NSString.class]&&key.length<=180){[self.pageNavigation settled:key];if(!self.keyboardVisible&&!self.websiteOverlay&&!self.profileOverlay)[self.pageNavigation capture];}
@@ -602,7 +603,7 @@ static UIView *ERPFocusedView(UIView *view) {
     webView.scrollView.pinchGestureRecognizer.enabled = NO;
     ERPPrepareTextInputs(webView);
     [self syncViewport:YES];
-    [self.refreshControl endRefreshing];
+    
 #if ERP_TESTING
     self.documentLoads++;
     if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"]) {
@@ -614,6 +615,7 @@ static UIView *ERPFocusedView(UIView *view) {
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-tabs"]) [self verifyTabsWhenReady:0];
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"]) [self verifySurfaces];
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"]) [self verifyNavigationSequence];
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-handoff"]) [self verifyHandoffSequence];
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-ux"]) [self verifyUXSequence];
     if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-motion"]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC),dispatch_get_main_queue(),^{[self captureMotion:@"root"];});
@@ -703,7 +705,8 @@ static UIView *ERPFocusedView(UIView *view) {
             dispatch_block_t next=^{dispatch_after(dispatch_time(DISPATCH_TIME_NOW,([NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"]?0:300)*NSEC_PER_MSEC),dispatch_get_main_queue(),^{[self runVerifySteps:steps index:index+1 deadline:0];});};
             NSString *phase=step[@"phase"];
             if(!phase.length){next();return;}
-            if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"])[self captureNavigation:phase completion:next];
+            if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-handoff"])[self captureHandoff:phase completion:next];
+            else if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"])[self captureNavigation:phase completion:next];
             else if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"])[self captureSurface:phase completion:next];
             else if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"])[self captureLayout:phase completion:next];
             else[self captureUX:phase completion:next];
@@ -712,7 +715,7 @@ static UIView *ERPFocusedView(UIView *view) {
         if(NSDate.timeIntervalSinceReferenceDate>=deadline){
             NSString *failure=[NSString stringWithFormat:@"Timed out at %@, condition %@, error %@",step[@"phase"]?:@(index),condition,error.localizedDescription?:@"none"];NSLog(@"%@",failure);
             NSDictionary *report=@{@"error":failure};
-            NSString *file=[NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"]?@"navigation-completed.json":[NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"]?@"surfaces-completed.json":[NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"]?@"layout-reopened.json":@"ux-dark.json";
+            NSString *file=[NSProcessInfo.processInfo.arguments containsObject:@"--verify-handoff"]?@"handoff-completed.json":[NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"]?@"navigation-completed.json":[NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"]?@"surfaces-completed.json":[NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"]?@"layout-reopened.json":@"ux-dark.json";
             NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
             [[NSJSONSerialization dataWithJSONObject:report options:0 error:nil] writeToURL:[directory URLByAppendingPathComponent:file] atomically:YES];return;
         }
@@ -742,7 +745,7 @@ static UIView *ERPFocusedView(UIView *view) {
 }
 - (void)verifyNavigationSequence {
     NSDictionary *(^step)(NSString *,NSString *,dispatch_block_t,BOOL(^)(void))=^(NSString *phase,NSString *condition,dispatch_block_t action,BOOL(^native)(void)){return @{@"phase":phase,@"condition":condition,@"action":[action copy],@"native":[native copy]};};
-    BOOL(^stable)(void)=^BOOL(void){return !self.pageNavigation.transitioning;};
+    BOOL(^stable)(void)=^BOOL(void){return !self.pageNavigation.transitioning&&!self.pageNavigation.handoff;};
     dispatch_block_t begin=^{self.verifyGestureBegan=[self.pageNavigation beginInteractive];[self.pageNavigation updateInteractive:self.web.bounds.size.width*.45];};
     NSArray *steps=@[
         step(@"",@"!!window.__fixtureOpen&&location.pathname==='/matches'",^{},^BOOL(void){return !self.pageNavigation.transitioning&&!self.bottomNav.hidden;}),
@@ -774,6 +777,22 @@ static UIView *ERPFocusedView(UIView *view) {
         step(@"dark",@"getComputedStyle(document.querySelector('.app-top')).backgroundColor==='rgb(24, 28, 35)'",^{[self verifyJavaScript:@"__fixtureDark()"];},^BOOL(void){return [self verifyHeaderRed:24.0/255];})
     ];[self runVerifySteps:steps index:0 deadline:0];
 }
+- (void)captureHandoff:(NSString *)phase completion:(dispatch_block_t)done {
+    NSDictionary *data=@{@"phase":phase,@"handoff":@(self.pageNavigation.handoff),@"interactive":@(self.pageNavigation.interactive),@"transitioning":@(self.pageNavigation.transitioning),@"webEnabled":@(self.web.userInteractionEnabled),@"alpha":@(self.web.alpha),@"loads":@(self.documentLoads)};
+    NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    [[NSJSONSerialization dataWithJSONObject:data options:NSJSONWritingPrettyPrinted error:nil] writeToURL:[directory URLByAppendingPathComponent:[NSString stringWithFormat:@"handoff-%@.json",phase]] atomically:YES];if(done)done();
+}
+- (void)verifyHandoffSequence {
+    NSDictionary *(^step)(NSString *,NSString *,dispatch_block_t,BOOL(^)(void))=^(NSString *phase,NSString *condition,dispatch_block_t action,BOOL(^native)(void)){return @{@"phase":phase,@"condition":condition,@"action":[action copy],@"native":[native copy]};};
+    BOOL(^painted)(void)=^BOOL(void){return !self.pageNavigation.transitioning&&!self.pageNavigation.handoff;};
+    NSArray *steps=@[
+        step(@"root",@"location.pathname==='/matches'&&!!document.getElementById('handoff-marker')",^{},^BOOL(void){return self.pageNavigation.canPreviewOverlay;}),
+        step(@"chat",@"location.pathname==='/matches/thread'",^{[self verifyJavaScript:@"__fixtureOpen('/matches/thread')"];},^BOOL(void){return !self.pageNavigation.transitioning&&!self.pageNavigation.handoff&&self.pageNavigation.canPreviewOverlay;}),
+        step(@"profile",@"location.pathname==='/u/peer'",^{[self verifyJavaScript:@"__fixtureOpen('/u/peer')"];},^BOOL(void){return !self.pageNavigation.transitioning&&!self.pageNavigation.handoff&&self.pageNavigation.canPreviewOverlay;}),
+        step(@"chat-return",@"location.pathname==='/matches/thread'",^{[self.pageNavigation beginInteractive];[self.pageNavigation updateInteractive:self.web.bounds.size.width*.6];[self.pageNavigation finishInteractive:self.web.bounds.size.width*.6 velocity:800 cancelled:NO];},painted),
+        step(@"completed",@"location.pathname==='/matches'",^{[self verifyJavaScript:@"__vrcrpPageBack()"];},painted)
+    ];[self runVerifySteps:steps index:0 deadline:0];
+}
 - (BOOL)verifyExternalPath:(NSString *)path back:(BOOL)back forward:(BOOL)forward {
     if(![self.presentedViewController isKindOfClass:ExternalBrowser.class])return NO;
     ExternalBrowser *browser=(ExternalBrowser *)self.presentedViewController;NSDictionary *state=[browser verifyState];
@@ -781,7 +800,7 @@ static UIView *ERPFocusedView(UIView *view) {
 }
 - (void)verifySurfaces {
     NSDictionary *(^step)(NSString *,NSString *,dispatch_block_t,BOOL(^)(void))=^(NSString *phase,NSString *condition,dispatch_block_t action,BOOL(^native)(void)){return @{@"phase":phase,@"condition":condition,@"action":[action copy],@"native":[native copy]};};
-    BOOL(^settled)(void)=^BOOL(void){return !self.pageNavigation.transitioning;};
+    BOOL(^settled)(void)=^BOOL(void){return !self.pageNavigation.transitioning&&!self.pageNavigation.handoff;};
     NSArray *steps=@[
         step(@"",@"!!window.__surfaceOpen",^{},^BOOL(void){return self.pageNavigation.canPreviewOverlay;}),
         step(@"edit-entry",@"location.pathname==='/profile/edit/basics'&&!!document.querySelector('[data-vrcrp-page-back]')",^{[self verifyJavaScript:@"__surfaceOpen('/profile/edit/basics')"];},settled),
@@ -795,7 +814,7 @@ static UIView *ERPFocusedView(UIView *view) {
         step(@"",@"location.pathname==='/matches'",^{[self verifyJavaScript:@"__surfaceOpen('/matches')"];},settled),
         step(@"pull",@"document.getElementById('main').hasAttribute('data-vrcrp-pulling')",^{[self showPullDistance:100];},^BOOL(void){return !self.refreshHint.hidden;}),
         step(@"refreshed",@"window.fixtureRefreshes>=1&&!document.getElementById('main').hasAttribute('data-vrcrp-pulling')",^{[self refreshPage:nil];},^BOOL(void){return !self.refreshing&&self.refreshHint.hidden;}),
-        step(@"",@"location.pathname==='/discover'",^{[self verifyJavaScript:@"__surfaceOpen('/discover')"];},^BOOL(void){return !self.pageNavigation.transitioning&&self.pageNavigation.canPreviewOverlay;}),
+        step(@"",@"location.pathname==='/discover'",^{[self verifyJavaScript:@"__surfaceOpen('/discover')"];},^BOOL(void){return !self.pageNavigation.transitioning&&!self.pageNavigation.handoff&&self.pageNavigation.canPreviewOverlay;}),
         step(@"",@"!!document.querySelector('[data-vrcrp-profile-overlay]')",^{[self verifyJavaScript:@"__surfaceOverlay()"];},^BOOL(void){return self.profileOverlay;}),
         step(@"overlay-preview",@"!!document.querySelector('[data-vrcrp-profile-overlay]')",^{[self.pageNavigation beginOverlayInteractive];[self.pageNavigation updateInteractive:self.web.bounds.size.width*.4];},^BOOL(void){return self.profileOverlay&&self.pageNavigation.interactive;}),
         step(@"overlay-cancelled",@"!!document.querySelector('[data-vrcrp-profile-overlay]')",^{[self.pageNavigation finishInteractive:self.web.bounds.size.width*.4 velocity:-500 cancelled:NO];},settled),
@@ -818,7 +837,7 @@ static UIView *ERPFocusedView(UIView *view) {
 - (void)captureSurface:(NSString *)phase completion:(dispatch_block_t)done {
     CGFloat r,g,b,a;[self.web.scrollView.backgroundColor getRed:&r green:&g blue:&b alpha:&a];
     CGRect hint=[self.refreshHint convertRect:self.refreshHint.bounds toView:self.view];
-    NSMutableDictionary *data=[@{@"keyboard":@(self.keyboardVisible),@"backEnabled":@(self.edgeBack.enabled),@"edgeBackAllowed":@([self canStartBackAtPoint:CGPointMake(12,180) velocity:CGPointMake(700,0)]),@"headerHeight":@(self.pageHeaderHeight),@"hintTop":@(hint.origin.y-self.web.frame.origin.y),@"hintVisible":@(!self.refreshHint.hidden&&!self.refreshSurface.hidden),@"hintText":self.refreshLabel.text?:@"",@"bounce":@(self.web.scrollView.bounces),@"surfaceColor":@[@(r),@(g),@(b),@(a)],@"documentLoads":@(self.documentLoads),@"overlay":@(self.profileOverlay),@"interactive":@(self.pageNavigation.interactive),@"transitioning":@(self.pageNavigation.transitioning),@"translation":@(self.web.transform.tx)} mutableCopy];
+    NSMutableDictionary *data=[@{@"systemRefreshControl":@(self.web.scrollView.refreshControl!=nil),@"keyboard":@(self.keyboardVisible),@"backEnabled":@(self.edgeBack.enabled),@"edgeBackAllowed":@([self canStartBackAtPoint:CGPointMake(12,180) velocity:CGPointMake(700,0)]),@"headerHeight":@(self.pageHeaderHeight),@"hintTop":@(hint.origin.y-self.web.frame.origin.y),@"hintVisible":@(!self.refreshHint.hidden&&!self.refreshSurface.hidden),@"hintText":self.refreshLabel.text?:@"",@"bounce":@(self.web.scrollView.bounces),@"surfaceColor":@[@(r),@(g),@(b),@(a)],@"documentLoads":@(self.documentLoads),@"overlay":@(self.profileOverlay),@"interactive":@(self.pageNavigation.interactive),@"transitioning":@(self.pageNavigation.transitioning),@"translation":@(self.web.transform.tx)} mutableCopy];
     if([self.presentedViewController isKindOfClass:ExternalBrowser.class])data[@"external"]=[(ExternalBrowser *)self.presentedViewController verifyState];
     UIWindow *visibleWindow=self.presentedViewController.view.window?:self.view.window;
     if(visibleWindow&&[@[@"chat",@"pull",@"dark-pull",@"light-pull",@"external-a"] containsObject:phase]) {
@@ -839,7 +858,7 @@ static UIView *ERPFocusedView(UIView *view) {
         NSMutableDictionary *state=[self.surfaceWebState mutableCopy]?:[NSMutableDictionary new];
         state[@"mainURL"]=self.web.URL.absoluteString?:@"";state[@"path"]=self.web.URL.path?:@"";save(state,nil);return;
     }
-    [self.web evaluateJavaScript:@"({path:location.pathname,index:history.state?.idx,historyLength:history.length,globalHeaderHidden:getComputedStyle(document.querySelector('.app-top')).display==='none',chatHeaderTop:document.querySelector('[data-vrcrp-chat-bar]')?.getBoundingClientRect().top ?? null,unread:document.querySelector('[data-vrcrp-unread]')?.textContent ?? null,backButton:!!document.querySelector('[data-vrcrp-page-back]'),refreshes:window.fixtureRefreshes,installHidden:!!navigator.standalone,mainURL:location.href})" completionHandler:^(id result,NSError *error){
+    [self.web evaluateJavaScript:@"({path:location.pathname,index:history.state?.idx,historyLength:history.length,globalHeaderHidden:getComputedStyle(document.querySelector('.app-top')).display==='none',chatHeaderTop:document.querySelector('[data-vrcrp-chat-bar]')?.getBoundingClientRect().top ?? null,chatHeaderLeft:document.querySelector('[data-vrcrp-chat-bar]')?.getBoundingClientRect().left ?? null,chatHeaderRight:document.querySelector('[data-vrcrp-chat-bar]')?.getBoundingClientRect().right ?? null,viewportWidth:document.documentElement.clientWidth,noWebsitePull:document.documentElement.hasAttribute('data-no-ptr'),composerPadding:getComputedStyle(document.getElementById('main')).paddingBottom,safeBottom:(()=>{const d=document.createElement('div');d.style='position:fixed;height:env(safe-area-inset-bottom);width:0;pointer-events:none';document.body.append(d);const h=d.getBoundingClientRect().height;d.remove();return h})(),unread:document.querySelector('[data-vrcrp-unread]')?.textContent ?? null,backButton:!!document.querySelector('[data-vrcrp-page-back]'),refreshes:window.fixtureRefreshes,installHidden:!!navigator.standalone,mainURL:location.href})" completionHandler:^(id result,NSError *error){
         if([result isKindOfClass:NSDictionary.class])self.surfaceWebState=result;save(result,error);
     }];
 }
@@ -889,7 +908,7 @@ static UIView *ERPFocusedView(UIView *view) {
 }
 - (void)showError:(NSError *)error {
     if (error.code == NSURLErrorCancelled) return;
-    [self.refreshControl endRefreshing];
+    
     if (!self.hasContent) {
         self.loadingCover.hidden=NO; self.loadingCover.alpha=1; [self.spinner stopAnimating];
         self.loadingCaption.text=@"暂时无法连接，请检查网络后重试。"; self.retryButton.hidden=NO;

@@ -41,11 +41,13 @@ html[data-fixture-screen="discover"] main{display:block}.page-heading{height:72p
 .actions{display:flex;justify-content:center;align-items:center;gap:14px;margin-top:20px}.act{border-radius:50%;width:64px;height:64px;background:rgb(var(--surface));border:2px solid #273349;font-size:24px}.act-super{width:56px;height:56px}.act-like{background:rgb(var(--primary));color:white}.profile{padding:16px}
 </style><script>
 window.__fixtureOpen=path=>{history.pushState({idx:(history.state?.idx??0)+1,key:Math.random().toString()},'',path);render()};
+const handoffTest=new URLSearchParams(location.search).get('fixture')==='handoff';
 function render(){const path=location.pathname,chat=/^\/matches\/[^/]+$/.test(path);document.documentElement.dataset.fixtureScreen=path==='/discover'?'discover':chat?'chat':'profile';document.querySelector('.shell').classList.toggle('h-dvh',chat);const main=document.getElementById('main');
 if(path==='/discover')main.innerHTML='<h1 class="page-heading">探索 · 布局测试</h1><div class="deck"><div class="stage">虚构卡片</div><div class="actions"><button class="act act-pass" aria-label="跳过">×</button><button class="act act-super" aria-label="超级喜欢">★</button><button class="act act-like" aria-label="喜欢">♥</button></div></div>';
 else if(path==='/matches')main.innerHTML='<section class="profile"><h1>配对 · 列表测试</h1><a href="/matches/thread" onclick="event.preventDefault();__fixtureOpen(\'/matches/thread\')">虚构会话</a></section>';
 else if(chat)main.innerHTML='<section class="chat"><header class="chat-header">聊天 · 布局测试</header><div class="messages">虚构测试消息</div><form class="composer"><textarea placeholder="消息"></textarea><button type="button">发送</button></form></section>';
 else main.innerHTML='<section class="profile"><h1>资料详情 · 布局测试</h1><p>从聊天进入的第三级页面。</p></section>';
+if(handoffTest){const marker=document.createElement('div');marker.id='handoff-marker';marker.style='position:fixed;inset:0;pointer-events:none;z-index:10;background:'+(path==='/matches'?'#1769aa':chat?'#c62828':'#e65100');main.append(marker)}
 active();}
 window.addEventListener('popstate',render);document.documentElement.style.setProperty('--bg','255 235 117');render();
 window.__fixtureDark=()=>{document.documentElement.style.setProperty('--surface','24 28 35');document.documentElement.style.setProperty('--bg','12 18 25');document.body.style.color='#eef2f9';document.querySelector('meta[name="theme-color"]').content='#0c1219'};

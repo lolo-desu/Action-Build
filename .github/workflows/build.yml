@@ -50,6 +50,9 @@ jobs:
             build/ux-*.json
             build/app-ux.png
             build/navigation-*.json
+            build/handoff-*.json
+            build/handoff.mov
+            build/handoff-record.log
             build/motion-*.json
             build/surfaces-*.json
             build/surfaces-*.png

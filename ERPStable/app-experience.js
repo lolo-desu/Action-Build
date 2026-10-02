@@ -15,7 +15,7 @@
     html[data-vrcrp-keyboard="true"] .app-bottom { visibility: hidden !important; pointer-events: none !important; }
     html[data-vrcrp-app="true"] #main { padding-bottom: calc(var(--vrcrp-nav-space, 0px) + 16px) !important; }
     html[data-vrcrp-detail="true"] #main { padding-bottom: calc(16px + env(safe-area-inset-bottom)) !important; }
-    html[data-vrcrp-chat="true"] #main { padding-bottom: calc(12px + env(safe-area-inset-bottom)) !important; }
+    html[data-vrcrp-chat="true"] #main { padding-bottom: calc(6px + env(safe-area-inset-bottom)) !important; }
     html[data-vrcrp-explore-grid="true"] .app-bottom a[href="/discover"] { color: rgb(var(--primary)) !important; font-weight: 600 !important; }
     [data-vrcrp-swipe-group="true"] { max-width: min(100%, var(--vrcrp-swipe-width)) !important; }
     [data-vrcrp-swipe-actions="true"] > * { flex-shrink: 0 !important; }
@@ -193,6 +193,18 @@
     saveView();
     post({kind:'willNavigate',entryKey:entryKey(),toPath:path,direction:motion});
   }
+  function committedRouterPath(){
+    // Read only the committed root, never a work-in-progress alternate tree.
+    const root=document.getElementById('root'),attachment=root&&Object.keys(root).find(k=>k.startsWith('__reactContainer$'));
+    const fiber=attachment&&root[attachment],queue=fiber?[fiber.stateNode?.current||fiber]:[],seen=new Set();
+    for(let n=0;queue.length&&n<300;n++){
+      const node=queue.shift();if(!node||seen.has(node))continue;seen.add(node);
+      const value=node.memoizedProps?.value,path=value?.location?.pathname;
+      if(typeof path==='string'&&('navigationType' in value||'matches' in value))return path;
+      if(node.child)queue.push(node.child);if(node.sibling)queue.push(node.sibling);
+    }
+    return null;
+  }
   function settle() {
     const owner = ++settleGeneration, key = entryKey(), saved = pendingRestore;
     const started = performance.now();
@@ -220,6 +232,12 @@
       // A covered WebKit view may pause animation frames. Restoring an entry
       // must not depend on a paint to acknowledge that history traversal.
       if(owner===settleGeneration&&key===entryKey())post({kind:'routeSettled',entryKey:key,path:location.pathname});
+      const paint=()=>{
+        if(owner!==settleGeneration||key!==entryKey())return;
+        const committed=committedRouterPath();
+        if(committed!==null&&committed!==location.pathname){requestAnimationFrame(paint);return;}
+        requestAnimationFrame(()=>{if(owner===settleGeneration&&key===entryKey())post({kind:'pagePainted',entryKey:key,path:location.pathname});});
+      };requestAnimationFrame(paint);
     }
     attempt();
   }
