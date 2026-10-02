@@ -12,7 +12,7 @@ mkdir -p "$APP"
 xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" \
   -miphoneos-version-min=15.0 -fobjc-arc -O2 \
   -framework UIKit -framework Foundation -framework WebKit -framework CoreGraphics -framework UserNotifications -framework SafariServices \
-  -Wl,-no_adhoc_codesign "$ROOT/ERPStable/main.m" "$ROOT/ERPStable/GlassNavigation.m" -o "$APP/ERPStable"
+  -Wl,-no_adhoc_codesign "$ROOT/ERPStable/main.m" "$ROOT/ERPStable/ThemeNavigation.m" "$ROOT/ERPStable/ChatNotifications.m" -o "$APP/ERPStable"
 cp "$ROOT/ERPStable/Info.plist" "$APP/Info.plist"
 cp "$ROOT/ERPStable/interaction.js" "$APP/interaction.js"
 cp "$ROOT/ERPStable/notifications.js" "$APP/notifications.js"

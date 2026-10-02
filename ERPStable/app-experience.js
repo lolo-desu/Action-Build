@@ -2,29 +2,25 @@
   'use strict';
   const bridge = window.webkit?.messageHandlers?.erpNativeApp;
   if (window !== window.top || location.origin !== 'https://erp.sex' || !bridge) return;
-  const roots = new Set(['/', '/discover', '/browse', '/likes', '/matches', '/posts', '/me', '/login', '/register']);
+  const tabPages = new Set(['/', '/discover', '/browse', '/likes', '/likes/sent', '/matches', '/posts', '/me']);
+  const roots = new Set([...tabPages, '/login', '/register']);
   const refreshable = new Set(['/likes', '/likes/sent', '/matches', '/posts', '/visitors', '/notifications']);
   const css = `
-    html[data-vrcrp-app="true"] .app-top,
-    html[data-vrcrp-app="true"] .app-bottom {
-      background: rgb(var(--surface) / .79) !important;
-      -webkit-backdrop-filter: blur(24px) saturate(1.55) !important;
-      backdrop-filter: blur(24px) saturate(1.55) !important;
-      box-shadow: inset 0 1px 0 rgb(255 255 255 / .22), 0 5px 18px rgb(0 0 0 / .035);
-    }
-    html[data-vrcrp-app="true"] .dialog-panel {
-      background: rgb(var(--surface) / .88) !important;
-      -webkit-backdrop-filter: blur(28px) saturate(1.45) !important;
-      backdrop-filter: blur(28px) saturate(1.45) !important;
-      box-shadow: inset 0 1px 0 rgb(255 255 255 / .24), 0 20px 64px rgb(0 0 0 / .16);
+    html[data-vrcrp-app="true"] .app-top {
+      background: rgb(var(--surface)) !important;
+      -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
     }
     html[data-vrcrp-native-nav="true"] .app-bottom { opacity: 0 !important; }
+    html[data-vrcrp-detail="true"] .app-bottom,
+    html[data-vrcrp-keyboard="true"] .app-bottom { visibility: hidden !important; pointer-events: none !important; }
+    html[data-vrcrp-app="true"] #main { padding-bottom: calc(var(--vrcrp-nav-space, 0px) + 16px) !important; }
+    html[data-vrcrp-detail="true"] #main { padding-bottom: calc(16px + env(safe-area-inset-bottom)) !important; }
+    html[data-vrcrp-chat="true"] #main { padding-bottom: calc(12px + env(safe-area-inset-bottom)) !important; }
+    html[data-vrcrp-explore-grid="true"] .app-bottom a[href="/discover"] { color: rgb(var(--primary)) !important; font-weight: 600 !important; }
+    [data-vrcrp-swipe-group="true"] { max-width: min(100%, var(--vrcrp-swipe-width)) !important; }
+    [data-vrcrp-swipe-actions="true"] > * { flex-shrink: 0 !important; }
     @keyframes vrcrp-page-arrive { from { opacity: .72; transform: translateY(5px); } to { opacity: 1; transform: none; } }
     #main.vrcrp-page-arrive { animation: vrcrp-page-arrive 180ms cubic-bezier(.2,.7,.2,1); }
-    html[data-vrcrp-reduce-transparency="true"] .app-top,
-    html[data-vrcrp-reduce-transparency="true"] .dialog-panel {
-      background: rgb(var(--surface)) !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
-    }
     @media (prefers-reduced-motion: reduce) { #main.vrcrp-page-arrive { animation: none; } }
   `;
   function post(value) { try { bridge.postMessage(value); } catch {} }
@@ -37,6 +33,52 @@
   function box(element, relative) {
     const r = element.getBoundingClientRect();
     return { x: r.x - (relative?.x ?? 0), y: r.y - (relative?.y ?? 0), width: r.width, height: r.height };
+  }
+  function setProperty(name, value) {
+    const style = document.documentElement.style;
+    if (style.getPropertyValue(name) !== value) style.setProperty(name, value);
+  }
+  let surfaceFingerprint = '';
+  function updateTopSurface() {
+    // Read painted CSS surfaces, never pixels from profile/chat media. A modal
+    // or full-screen preview can cover the regular header without changing URL.
+    const width = document.documentElement.clientWidth || innerWidth;
+    const layers = document.elementsFromPoint(width / 2, 4).reverse();
+    let color = [1, 1, 1, 1];
+    for (const element of new Set(layers)) {
+      const style = getComputedStyle(element);
+      let opacity = 1;
+      for (let node = element; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+      if (style.visibility === 'hidden' || opacity <= 0) continue;
+      const layer = rgba(style.backgroundColor), alpha = layer[3] * opacity;
+      color = color.map((value, i) => i === 3 ? 1 : layer[i] * alpha + value * (1 - alpha));
+    }
+    color = color.map(value => Math.round(value * 100000) / 100000);
+    const fingerprint = JSON.stringify(color);
+    if (fingerprint !== surfaceFingerprint) { surfaceFingerprint = fingerprint; post({ kind: 'topSurface', color }); }
+  }
+  function fitSwipeControls(navHeight) {
+    const stage = document.querySelector('#main .stage');
+    const actions = document.querySelector('#main .act-pass')?.parentElement;
+    const group = stage?.parentElement;
+    if (!stage || !actions || !group || !group.contains(actions)) return;
+    if (location.pathname !== '/discover' || document.documentElement.dataset.vrcrpKeyboard === 'true' || innerWidth >= 1024) {
+      group.removeAttribute('data-vrcrp-swipe-group'); actions.removeAttribute('data-vrcrp-swipe-actions'); return;
+    }
+    // Measure the site's natural size, then shrink only the card group when
+    // needed. Keep the action order, button dimensions and Framer drag intact.
+    group.removeAttribute('data-vrcrp-swipe-group');
+    actions.dataset.vrcrpSwipeActions = 'true';
+    const r = stage.getBoundingClientRect(), parent = group.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return;
+    const height = parseFloat(document.documentElement.style.getPropertyValue('--vrcrp-viewport-height')) || innerHeight;
+    const gap = parseFloat(getComputedStyle(actions).columnGap) || 0;
+    const intrinsic = [...actions.children].reduce((sum, el) => sum + el.getBoundingClientRect().width, 0) + gap * Math.max(0, actions.children.length - 1);
+    const tail = parent.height - r.height;
+    const room = height - navHeight - 12 - (r.top + scrollY) - tail;
+    const width = Math.min(r.width, Math.max(210, intrinsic, room * r.width / r.height));
+    setProperty('--vrcrp-swipe-width', `${Math.round(width * 100) / 100}px`);
+    group.dataset.vrcrpSwipeGroup = 'true';
   }
   function navigationBlocked(nav, rect) {
     const height = parseFloat(document.documentElement.style.getPropertyValue('--vrcrp-viewport-height')) || innerHeight;
@@ -94,7 +136,8 @@
   let index = 0;
   let baseIndex = Number.isInteger(history.state?.idx) ? history.state.idx : 0;
   function route() {
-    post({ kind: 'route', path: location.pathname, canGoBack: index > 0 && !roots.has(location.pathname), refreshable: refreshable.has(location.pathname) });
+    post({ kind: 'route', path: location.pathname, showTabs: tabPages.has(location.pathname), canGoBack: index > 0 && !roots.has(location.pathname), refreshable: refreshable.has(location.pathname) });
+    if (location.pathname === '/matches') window.__vrcrpSyncChats?.();
   }
   function arrive() {
     const main = document.getElementById('main');
@@ -110,6 +153,8 @@
     const root = document.documentElement;
     if (!root || !document.head) return;
     root.dataset.vrcrpApp = 'true';
+    root.dataset.vrcrpDetail = String(!tabPages.has(location.pathname));
+    root.dataset.vrcrpExploreGrid = String(location.pathname === '/browse');
     if (!document.getElementById('vrcrp-app-surfaces')) {
       const style = document.createElement('style'); style.id = 'vrcrp-app-surfaces'; style.textContent = css; document.head.appendChild(style);
     }
@@ -121,13 +166,32 @@
       if (lastPath !== location.pathname) arrive();
       lastPath = location.pathname;
     }
+    if (location.pathname === '/settings/notifications' && !document.getElementById('vrcrp-system-notifications')) {
+      const main = document.getElementById('main');
+      if (main) {
+        const card = document.createElement('section'); card.id = 'vrcrp-system-notifications'; card.className = 'card mt-4 p-4';
+        const caption = document.createElement('p'); caption.textContent = 'iOS 消息通知'; caption.className = 'font-semibold';
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = '系统通知设置';
+        button.className = 'mt-3 rounded-ctl border border-border bg-surface2 px-4 py-3 text-fg';
+        button.addEventListener('click', () => post({ kind: 'notificationSettings' }));
+        const description = document.createElement('p'); description.textContent = '管理横幅、锁屏提醒、声音和消息预览'; description.className = 'mt-2 text-sm text-muted';
+        card.append(caption,button,description); main.appendChild(card);
+      }
+    }
     const nav = document.querySelector('.app-bottom');
     const anchors = nav ? [...nav.querySelectorAll('a[href]')] : [];
-    let model = { kind: 'navigation', visible: false };
+    const keyboard = root.dataset.vrcrpKeyboard === 'true';
+    const showTabs = tabPages.has(location.pathname) && !keyboard;
+    const navHeight = nav && getComputedStyle(nav).display !== 'none' ? nav.getBoundingClientRect().height : 0;
+    setProperty('--vrcrp-nav-space', `${showTabs ? navHeight : 0}px`);
+    fitSwipeControls(showTabs ? navHeight : 0);
+    updateTopSurface();
+    let model = { kind: 'navigation', visible: false, overlay: false };
     if (nav && anchors.length === 5 && getComputedStyle(nav).display !== 'none' && nav.getBoundingClientRect().width > 0) {
       const rect = nav.getBoundingClientRect();
       // Native views must not cover a site's modal, menu backdrop or lightbox.
-      const visible = getComputedStyle(nav).visibility !== 'hidden' && !navigationBlocked(nav, rect);
+      const overlay = navigationBlocked(nav, rect);
+      const visible = showTabs && getComputedStyle(nav).visibility !== 'hidden' && !overlay;
       const navStyle = getComputedStyle(nav);
       const items = await Promise.all(anchors.map(async (a, slot) => {
         const style = getComputedStyle(a), svg = a.querySelector('svg');
@@ -143,15 +207,15 @@
         const badgeStyle = badge ? getComputedStyle(badge) : null;
         return {
           slot, path: new URL(a.href, location.href).pathname, title: label || a.getAttribute('aria-label') || '',
-          selected: a.getAttribute('aria-current') === 'page', frame: box(a, rect), iconFrame: svg ? box(svg, a.getBoundingClientRect()) : null, labelFrame,
-          icon: svg ? await rasterIcon(svg, getComputedStyle(svg).color) : '', color: rgba(style.color), fontSize: parseFloat(style.fontSize), bold: parseInt(style.fontWeight) >= 600,
+          selected: a.getAttribute('aria-current') === 'page' || location.pathname === '/browse' && new URL(a.href, location.href).pathname === '/discover', frame: box(a, rect), iconFrame: svg ? box(svg, a.getBoundingClientRect()) : null, labelFrame,
+          icon: svg ? await rasterIcon(svg, getComputedStyle(svg).color) : '', color: rgba(style.color), fontSize: parseFloat(style.fontSize), bold: parseInt(style.fontWeight) >= 600, radius: parseFloat(style.borderRadius) || 0,
           badge: badge ? { title: badge.textContent, frame: box(badge, a.getBoundingClientRect()), color: rgba(badgeStyle.color), background: rgba(badgeStyle.backgroundColor) } : null,
         };
       }));
       if (currentGeneration !== generation || nav !== document.querySelector('.app-bottom')) return;
       let background = rgba(navStyle.backgroundColor);
       if (background[3] < .05) background = rgba(getComputedStyle(document.body).backgroundColor);
-      model = { kind: 'navigation', visible, frame: box(nav), bottomPadding: parseFloat(navStyle.paddingBottom) || 0, background, items };
+      model = { kind: 'navigation', visible, overlay, frame: box(nav), bottomPadding: parseFloat(navStyle.paddingBottom) || 0, background, borderColor: rgba(navStyle.borderTopColor), borderWidth: parseFloat(navStyle.borderTopWidth) || 0, items };
     }
     const fingerprint = JSON.stringify(model);
     if (fingerprint !== navFingerprint) { navFingerprint = fingerprint; post(model); }
@@ -173,13 +237,30 @@
     document.documentElement.dataset.vrcrpReduceMotion = String(value.reduceMotion === true);
   };
   window.__vrcrpActivateTab = slot => {
+    if (!tabPages.has(location.pathname) || document.documentElement.dataset.vrcrpKeyboard === 'true') return;
     const anchors = [...(document.querySelector('.app-bottom')?.querySelectorAll('a[href]') ?? [])];
-    if (Number.isInteger(slot) && slot >= 0 && slot < anchors.length) anchors[slot].click();
+    if (Number.isInteger(slot) && slot >= 0 && slot < anchors.length) {
+      const anchor = anchors[slot];
+      if (new URL(anchor.href, location.href).pathname === location.pathname) {
+        window.scrollTo({ top: 0, behavior: document.documentElement.dataset.vrcrpReduceMotion === 'true' || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+        if (location.pathname === '/matches') window.__vrcrpSyncChats?.();
+      } else anchor.click();
+    }
   };
   window.__vrcrpBack = () => { if (index > 0 && !roots.has(location.pathname)) history.back(); };
   window.__vrcrpOpenMatches = () => {
     const link = document.querySelector('.app-bottom a[href="/matches"]');
     if (link) link.click(); else location.assign('/matches');
+  };
+  window.__vrcrpOpenChat = id => {
+    if (typeof id !== 'string' || !/^[\w-]{1,120}$/.test(id)) return;
+    const path = '/matches/' + id;
+    if (location.pathname === path) return;
+    const link = [...document.querySelectorAll('a[href]')].find(a => new URL(a.href, location.href).pathname === path);
+    if (link) { link.click(); return; }
+    const state = { usr: null, key: Math.random().toString(36).slice(2), idx: (history.state?.idx ?? 0) + 1 };
+    history.pushState(state, '', path);
+    window.dispatchEvent(new PopStateEvent('popstate', { state }));
   };
   for (const method of ['pushState', 'replaceState']) {
     const original = history[method];
@@ -218,7 +299,7 @@
   };
   new MutationObserver(records => {
     if (!ready || records.some(record => record.type !== 'attributes' || record.target === document.documentElement || record.target === document.body || record.target.closest?.('.app-bottom,.app-top,[role="dialog"],.dialog-panel') || record.attributeName === 'open')) schedule();
-  }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true, attributeFilter: ['class', 'style', 'aria-current', 'open', 'data-preset', 'data-theme'] });
+  }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true, attributeFilter: ['class', 'style', 'aria-current', 'open', 'data-preset', 'data-theme', 'data-vrcrp-keyboard'] });
   window.addEventListener('resize', schedule);
   window.addEventListener('scroll', schedule, { passive: true });
   document.addEventListener('focusin', schedule);

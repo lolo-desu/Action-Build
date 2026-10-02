@@ -11,7 +11,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Check unread notification handling
+      - name: Check notification previews and live refresh
         run: node scripts/test-notifications.cjs
       - name: Build arm64 device application
         run: bash scripts/build-unsigned.sh
@@ -28,7 +28,7 @@ jobs:
           test -f build/Payload/ERPStable.app/AppIcon60x60@3x.png
           plutil -extract CFBundleDisplayName raw build/Payload/ERPStable.app/Info.plist
           shasum -a 256 build/ERPStable-unsigned.ipa > build/SHA256.txt
-      - name: Check WebKit keyboard in iOS Simulator
+      - name: Check keyboard, navigation, card spacing and status bar in iOS Simulator
         run: bash scripts/simulator-check.sh
       - uses: actions/upload-artifact@v4
         if: always()
@@ -41,10 +41,12 @@ jobs:
             build/layout-reopened.json
             build/web-keyboard.png
             build/web-login.png
-            build/glass-tabs.json
-            build/glass-modal.json
-            build/glass-restored.json
-            build/app-glass.png
+            build/tabs-tabs.json
+            build/tabs-modal.json
+            build/tabs-restored.json
+            build/app-tabs.png
+            build/ux-*.json
+            build/app-ux.png
             build/simulator-timeout.png
             build/simulator-timeout.log
           if-no-files-found: error

@@ -1,4 +1,4 @@
-#import "GlassNavigation.h"
+#import "ThemeNavigation.h"
 #import <math.h>
 
 UIColor *VRColor(id values, UIColor *fallback) {
@@ -21,8 +21,9 @@ CGRect VRRect(id value) {
     return CGRectMake(components[0],components[1],MAX(0,components[2]),MAX(0,components[3]));
 }
 
-@interface GlassNavigation ()
-@property(nonatomic, strong, readwrite) UIVisualEffectView *material;
+@interface ThemeNavigation ()
+@property(nonatomic, strong, readwrite) UIView *surface;
+@property(nonatomic, strong) UIView *topBorder;
 @property(nonatomic, strong, readwrite) NSArray<UIButton *> *buttons;
 @property(nonatomic, strong) UIView *selection;
 @property(nonatomic, strong) NSArray<UIImageView *> *icons;
@@ -31,20 +32,14 @@ CGRect VRRect(id value) {
 @property(nonatomic, strong) NSDictionary *model;
 @end
 
-@implementation GlassNavigation
+@implementation ThemeNavigation
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self=[super initWithFrame:frame])) return nil;
     self.hidden=YES;
-    UIVisualEffect *effect;
-    if (@available(iOS 26.0,*)) {
-        UIGlassEffect *glass=[UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
-        glass.interactive=YES; effect=glass;
-    } else { effect=[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial]; }
-    self.material=[[UIVisualEffectView alloc] initWithEffect:effect];
-    self.material.clipsToBounds=YES;
-    [self addSubview:self.material];
+    self.surface=[UIView new]; [self addSubview:self.surface];
+    self.topBorder=[UIView new]; self.topBorder.userInteractionEnabled=NO; [self.surface addSubview:self.topBorder];
     self.selection=[UIView new]; self.selection.userInteractionEnabled=NO;
-    [self.material.contentView addSubview:self.selection];
+    [self.surface addSubview:self.selection];
     NSMutableArray *buttons=[NSMutableArray new],*icons=[NSMutableArray new],*titles=[NSMutableArray new],*badges=[NSMutableArray new];
     for (NSInteger slot=0;slot<5;slot++) {
         UIButton *button=[UIButton buttonWithType:UIButtonTypeCustom]; button.tag=slot;
@@ -58,7 +53,7 @@ CGRect VRRect(id value) {
         icon.userInteractionEnabled=title.userInteractionEnabled=badge.userInteractionEnabled=NO;
         [button addSubview:icon]; [button addSubview:title]; [button addSubview:badge];
         button.isAccessibilityElement=YES;
-        [self.material.contentView addSubview:button]; [buttons addObject:button]; [icons addObject:icon]; [titles addObject:title]; [badges addObject:badge];
+        [self.surface addSubview:button]; [buttons addObject:button]; [icons addObject:icon]; [titles addObject:title]; [badges addObject:badge];
     }
     self.buttons=buttons; self.icons=icons; self.titles=titles; self.badges=badges;
     return self;
@@ -88,12 +83,8 @@ CGRect VRRect(id value) {
     UIColor *background=VRColor(model[@"background"],UIColor.systemBackgroundColor);
     CGFloat red=0,green=0,blue=0,alpha=1; [background getRed:&red green:&green blue:&blue alpha:&alpha];
     self.overrideUserInterfaceStyle=(.2126*red+.7152*green+.0722*blue<.5)?UIUserInterfaceStyleDark:UIUserInterfaceStyleLight;
-    if (@available(iOS 26.0,*)) {
-        UIGlassEffect *glass=[UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
-        glass.interactive=YES; glass.tintColor=[background colorWithAlphaComponent:.12];
-        self.material.effect=glass;
-    }
-    self.material.contentView.backgroundColor=UIAccessibilityIsReduceTransparencyEnabled()?background:UIColor.clearColor;
+    self.surface.backgroundColor=[background colorWithAlphaComponent:1];
+    self.topBorder.backgroundColor=VRColor(model[@"borderColor"],UIColor.separatorColor);
     for (NSInteger i=0;i<5;i++) {
         NSDictionary *item=items[i]; UIButton *button=self.buttons[i];
         UILabel *title=self.titles[i]; title.text=item[@"title"];
@@ -124,16 +115,13 @@ CGRect VRRect(id value) {
     if (!self.model) return;
     CGRect nav=VRRect(self.model[@"frame"]);
     self.frame=CGRectMake(webFrame.origin.x+nav.origin.x,CGRectGetMaxY(webFrame)-nav.size.height,nav.size.width,nav.size.height);
-    CGFloat bottom=MAX(0,MIN(60,[self.model[@"bottomPadding"] doubleValue]));
-    CGFloat height=MAX(50,nav.size.height-bottom);
-    self.material.frame=CGRectMake(8,0,nav.size.width-16,height);
-    self.material.layer.cornerRadius=height/2;
+    self.surface.frame=self.bounds;
+    self.topBorder.frame=CGRectMake(0,0,nav.size.width,MAX(0,MIN(6,[self.model[@"borderWidth"] doubleValue])));
     self.selection.hidden=YES;
     NSArray *items=self.model[@"items"];
     for (NSInteger i=0;i<5;i++) {
         NSDictionary *item=items[i]; CGRect frame=VRRect(item[@"frame"]); CGRect icon=VRRect(item[@"iconFrame"]);
-        CGRect buttonFrame=frame; buttonFrame.origin.x-=self.material.frame.origin.x; buttonFrame.origin.y-=self.material.frame.origin.y;
-        self.buttons[i].frame=buttonFrame; self.icons[i].frame=icon;
+        self.buttons[i].frame=frame; self.icons[i].frame=icon;
         CGFloat titleY=CGRectGetMaxY(icon)+2;
         CGFloat titleHeight=ceil(self.titles[i].font.lineHeight);
         CGRect label=VRRect(item[@"labelFrame"]);
@@ -144,8 +132,7 @@ CGRect VRRect(id value) {
         }
         if ([item[@"selected"] boolValue]) {
             CGRect selection=CGRectInset(frame,3,1);
-            selection.origin.x-=self.material.frame.origin.x; selection.origin.y-=self.material.frame.origin.y;
-            self.selection.frame=selection; self.selection.layer.cornerRadius=selection.size.height/2;
+            self.selection.frame=selection; self.selection.layer.cornerRadius=MAX(0,MIN(20,[item[@"radius"] doubleValue]));
             self.selection.backgroundColor=[self.titles[i].textColor colorWithAlphaComponent:.1]; self.selection.hidden=NO;
         }
     }

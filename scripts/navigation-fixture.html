@@ -1,0 +1,51 @@
+<!doctype html><html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#ecf1f8">
+<style>
+:root{--surface:255 255 255;--bg:236 241 248;--primary:237 83 82;--fg:39 51 73}
+*{box-sizing:border-box}html,body{margin:0;background:#ecf1f8;color:#273349;font:14px system-ui}
+.h-dvh{height:100dvh}.shell{display:flex;flex-direction:column;overflow:hidden}
+.app-top{height:56px;flex-shrink:0;padding:16px;border-bottom:1px solid #cbd5e1}
+main{display:flex;flex:1;min-height:0;flex-direction:column;padding:20px 12px calc(72px + env(safe-area-inset-bottom))}
+.chat{display:flex;flex:1;min-height:0;flex-direction:column;gap:12px}
+.chat-header{height:48px;flex-shrink:0}.messages{flex:1;min-height:0;overflow:auto;background:white;border-radius:16px;padding:16px}
+.composer{display:flex;gap:8px;flex-shrink:0;padding:12px;background:white;border-radius:16px}
+textarea{font:14px system-ui;flex:1;min-width:0;height:44px;border:1px solid #cbd5e1;border-radius:10px;padding:10px}
+button{font:14px system-ui;padding:8px;border:0;border-radius:10px;background:#dce9ff}
+.note{font-size:11px;flex-shrink:0}.app-bottom{position:fixed;bottom:0;inset-inline:0;padding:4px 4px env(safe-area-inset-bottom);background:white;border-top:1px solid #cbd5e1;display:flex;justify-content:space-around;z-index:40}
+.app-bottom a{position:relative;color:#768297;text-decoration:none;display:flex;flex:1;align-items:center;flex-direction:column;gap:2px;padding:6px 0;font-size:10.5px;line-height:15.75px;font-weight:500}
+.app-bottom a[aria-current="page"]{color:rgb(var(--primary));font-weight:600}.app-bottom svg{display:block;height:22px;width:22px}.app-bottom .icon{position:relative}.badge{position:absolute;top:-6px;right:-12px;border-radius:9px;min-width:18px;padding:0 6px;font-size:11px;line-height:18px;color:white;background:rgb(var(--primary))}
+</style></head><body>
+<div class="shell h-dvh"><header class="app-top">网站布局验证</header><main id="main"><section class="chat">
+<header class="chat-header">聊天</header><div class="messages">虚构测试消息，用于检查键盘首次弹出和再次弹出。</div>
+<form class="composer"><textarea placeholder="消息"></textarea><button type="button">发送</button></form>
+<div class="note">本页面只在模拟器测试构建中使用。</div>
+</section></main></div><nav class="app-bottom">
+<a href="/discover"><span class="icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m16 8-3 5-5 3 3-5Z"/></svg></span>探索</a>
+<a href="/likes"><span class="icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 4c-3-3-7-1-8 2C11 3 7 1 4 4c-4 4 0 8 8 15 8-7 12-11 8-15Z"/></svg><span class="badge">3</span></span>喜欢</a>
+<a href="/matches"><span class="icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h16v12H8l-5 5Zm5 16h9l4 3V8"/></svg></span>配对</a>
+<a href="/posts"><span class="icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18"/></svg></span>广场</a>
+<a href="/me"><span class="icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 22v-3a8 8 0 0 1 16 0v3"/></svg></span>我的</a>
+</nav>
+<script>
+window.__fixtureClicks=0;
+history.replaceState({idx:0,key:'initial'},'',location.href);
+function active(){document.querySelectorAll('.app-bottom a').forEach(a=>{if(location.pathname===a.getAttribute('href')||location.pathname.startsWith(a.getAttribute('href')+'/'))a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')})}
+document.querySelectorAll('.app-bottom a').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();window.__fixtureClicks++;history.pushState({idx:(history.state?.idx??0)+1,key:Math.random().toString()},'',a.getAttribute('href'));active()}));
+window.addEventListener('popstate',active);active();
+</script>
+<style>
+html,body{background:rgb(var(--bg))}.shell:not(.h-dvh){min-height:100dvh;overflow:visible}.app-top{position:sticky;top:0;z-index:40;background:rgb(var(--surface))}.app-bottom{border-top:2px solid #273349}
+html[data-fixture-screen="discover"] main{display:block}.page-heading{height:72px;margin:0;font-size:24px}.deck{width:100%;max-width:380px;margin:auto}.stage{aspect-ratio:3/4.3;width:100%;background:rgb(var(--surface));border:2px solid #273349;border-radius:16px;display:grid;place-items:center;touch-action:none}
+.actions{display:flex;justify-content:center;align-items:center;gap:14px;margin-top:20px}.act{border-radius:50%;width:64px;height:64px;background:rgb(var(--surface));border:2px solid #273349;font-size:24px}.act-super{width:56px;height:56px}.act-like{background:rgb(var(--primary));color:white}.profile{padding:16px}
+</style><script>
+window.__fixtureOpen=path=>{history.pushState({idx:(history.state?.idx??0)+1,key:Math.random().toString()},'',path);render()};
+function render(){const path=location.pathname,chat=/^\/matches\/[^/]+$/.test(path);document.documentElement.dataset.fixtureScreen=path==='/discover'?'discover':chat?'chat':'profile';document.querySelector('.shell').classList.toggle('h-dvh',chat);const main=document.getElementById('main');
+if(path==='/discover')main.innerHTML='<h1 class="page-heading">探索 · 布局测试</h1><div class="deck"><div class="stage">虚构卡片</div><div class="actions"><button class="act act-pass" aria-label="跳过">×</button><button class="act act-super" aria-label="超级喜欢">★</button><button class="act act-like" aria-label="喜欢">♥</button></div></div>';
+else if(chat)main.innerHTML='<section class="chat"><header class="chat-header">聊天 · 布局测试</header><div class="messages">虚构测试消息</div><form class="composer"><textarea placeholder="消息"></textarea><button type="button">发送</button></form></section>';
+else main.innerHTML='<section class="profile"><h1>资料详情 · 布局测试</h1><p>从聊天进入的第三级页面。</p></section>';
+active();}
+window.addEventListener('popstate',render);document.documentElement.style.setProperty('--bg','255 235 117');render();
+window.__fixtureDark=()=>{document.documentElement.style.setProperty('--surface','24 28 35');document.documentElement.style.setProperty('--bg','12 18 25');document.body.style.color='#eef2f9';document.querySelector('meta[name="theme-color"]').content='#0c1219'};
+</script></body></html>

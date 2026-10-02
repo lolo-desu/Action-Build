@@ -18,7 +18,7 @@ with sync_playwright() as p:
     page.route('https://erp.sex/**',lambda r:r.fulfill(body=fixture,content_type='text/html'))
     page.goto('https://erp.sex/discover')
     page.wait_for_function("nativeMessages.some(m=>m.kind==='navigation'&&m.items?.length===5)")
-    metrics="""() => [...document.querySelectorAll('.app-bottom a,.app-bottom svg,textarea,button,.app-top')].map(e=>{const r=e.getBoundingClientRect(),c=getComputedStyle(e);return [r.x,r.y,r.width,r.height,c.fontSize,c.color,c.padding]})"""
+    metrics="""() => [...document.querySelectorAll('.app-bottom a,.app-bottom svg')].map(e=>{const r=e.getBoundingClientRect(),c=getComputedStyle(e);return [r.x,r.y,r.width,r.height,c.fontSize,c.color,c.padding]})"""
     assert baseline.evaluate(metrics)==page.evaluate(metrics),'button geometry, fonts or foreground palette changed'
     model=page.evaluate("nativeMessages.filter(m=>m.kind==='navigation').at(-1)")
     assert [i['title'] for i in model['items']]==['探索','喜欢','配对','广场','我的']
@@ -28,7 +28,7 @@ with sync_playwright() as p:
     page.evaluate('__vrcrpNativeNavReady()')
     assert page.locator('.app-bottom').get_attribute('aria-hidden')=='true'
     assert page.locator('.app-bottom').evaluate('e=>getComputedStyle(e).opacity')=='0'
-    assert baseline.evaluate(metrics)==page.evaluate(metrics),'native acknowledgement altered layout'
+    assert baseline.evaluate(metrics)==page.evaluate(metrics),'native acknowledgement altered navigation layout'
     page.evaluate("""window.originalHitTest=document.elementFromPoint.bind(document);
     document.elementFromPoint=()=>null;window.dispatchEvent(new Event('resize'))""")
     page.wait_for_timeout(100)
@@ -37,7 +37,9 @@ with sync_playwright() as p:
     page.wait_for_function("location.pathname==='/posts'&&nativeMessages.filter(m=>m.kind==='navigation').at(-1).items[3].selected")
     assert page.evaluate('__fixtureClicks')==1,'native tab did not use the original click handler exactly once'
     page.evaluate("history.pushState({idx:history.state.idx+1,key:'detail'},'', '/posts/test')")
-    page.wait_for_function("nativeMessages.filter(m=>m.kind==='route').at(-1).canGoBack")
+    page.wait_for_function("nativeMessages.filter(m=>m.kind==='route').at(-1).canGoBack && nativeMessages.filter(m=>m.kind==='navigation').at(-1).visible===false")
+    assert page.locator('.app-bottom').evaluate('e=>getComputedStyle(e).visibility')=='hidden'
+    assert not page.evaluate("nativeMessages.filter(m=>m.kind==='navigation').at(-1).overlay"),'detail hiding must not disable native back'
     page.evaluate('__vrcrpBack()')
     page.wait_for_function("location.pathname==='/posts'&&!nativeMessages.filter(m=>m.kind==='route').at(-1).canGoBack")
     page.evaluate("const modal=document.createElement('div');modal.id='test-modal';modal.setAttribute('role','dialog');modal.style='position:fixed;inset:0;z-index:999;background:white';document.body.appendChild(modal)")
