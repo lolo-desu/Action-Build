@@ -49,6 +49,10 @@ with sync_playwright() as p:
     baseline.close()
     page.locator(".messages").evaluate("e=>{e.scrollTop=e.scrollHeight;e.dispatchEvent(new Event('scroll'))}")
     page.locator("textarea").focus()
+    # WebKit can scroll the pane during focus before native keyboard geometry.
+    page.locator('.messages').evaluate("e=>{e.scrollTop-=300;e.dispatchEvent(new Event('scroll'))}")
+    assert page.locator('.messages').evaluate('e=>e.scrollHeight-e.scrollTop-e.clientHeight')<2
+    page.evaluate('__vrcrpWillResizeViewport()')
     for height in [434, 793, 402, 440, 793, 434]:
         page.set_viewport_size({"width": 393, "height": height})
         page.evaluate("v => window.__vrcrpSetViewport(v)", {"width": 393, "height": height, "keyboardVisible": height < 793})
@@ -61,6 +65,8 @@ with sync_playwright() as p:
         assert metrics["top"] >= 0 and metrics["bottom"] <= metrics["navTop"], metrics
         assert metrics["scroll"] <= height, metrics
         assert metrics["gap"]<2 and metrics["last"]<=metrics["paneBottom"]+1,metrics
+        page.evaluate('__vrcrpDidResizeViewport()')
+        page.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))')
     # Browsing older messages must preserve its position when the pane resizes.
     page.locator('.messages').evaluate("e=>{e.scrollTop=120;e.dispatchEvent(new Event('scroll'))}")
     page.evaluate('__vrcrpSetViewport({width:393,height:420,keyboardVisible:true})')

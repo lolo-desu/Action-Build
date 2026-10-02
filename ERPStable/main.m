@@ -92,6 +92,7 @@ static UIView *ERPFocusedView(UIView *view) {
 @property(nonatomic, copy) NSString *pendingChatID;
 @property(nonatomic) NSTimeInterval lastHaptic;
 @property(nonatomic) NSUInteger snapshotGeneration;
+@property(nonatomic) NSUInteger keyboardResizeGeneration;
 #if ERP_TESTING
 @property(nonatomic) NSUInteger documentLoads;
 #endif
@@ -328,6 +329,7 @@ static UIView *ERPFocusedView(UIView *view) {
         CGRectGetWidth(overlap) >= CGRectGetWidth(self.view.bounds) * 0.5;
     CGFloat height = docked ? CGRectGetMaxY(self.view.bounds) - CGRectGetMinY(overlap) : 0;
     if ([notification.name isEqualToString:UIKeyboardWillHideNotification]) height = 0;
+    NSUInteger resizeGeneration=++self.keyboardResizeGeneration;
     [self.web evaluateJavaScript:@"window.__vrcrpWillResizeViewport?.()" completionHandler:nil];
     self.keyboardVisible = height > 0;
     self.edgeBack.enabled=self.canGoBack && !self.keyboardVisible && !self.websiteOverlay && !self.textSelected;
@@ -336,7 +338,7 @@ static UIView *ERPFocusedView(UIView *view) {
     UIViewAnimationOptions curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] integerValue] << 16;
     [UIView animateWithDuration:duration delay:0 options:curve | UIViewAnimationOptionBeginFromCurrentState
         animations:^{ [self.view layoutIfNeeded]; }
-        completion:^(BOOL finished) { [self syncViewport:YES]; }];
+        completion:^(BOOL finished) { [self syncViewport:YES]; if(resizeGeneration==self.keyboardResizeGeneration)[self.web evaluateJavaScript:@"window.__vrcrpDidResizeViewport?.()" completionHandler:nil]; }];
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
@@ -590,6 +592,7 @@ static UIView *ERPFocusedView(UIView *view) {
 }
 - (void)captureMotion:(NSString *)phase {
     NSMutableDictionary *data=[@{@"currentKey":self.pageNavigation.currentKey?:@"",@"previewKey":self.pageNavigation.previewKey?:NSNull.null,@"progress":@(self.pageNavigation.progress),@"transitioning":@(self.pageNavigation.transitioning),@"interactive":@(self.pageNavigation.interactive),@"canPreviewParent":@(self.pageNavigation.canPreviewParent),@"webTranslation":@(self.web.transform.tx),@"webWidth":@(self.web.bounds.size.width),@"webAlpha":@(self.web.alpha),@"documentLoads":@(self.documentLoads),@"nativeNavVisible":@(!self.bottomNav.hidden),@"fullWidthBack":@(![self.edgeBack isKindOfClass:UIScreenEdgePanGestureRecognizer.class]),@"centerBackAllowed":@([self canStartBackAtPoint:CGPointMake(self.web.bounds.size.width*.55,self.web.bounds.size.height*.45) velocity:CGPointMake(700,0)])} mutableCopy];
+    if(self.horizontalZones.count){CGRect zone=VRRect(self.horizontalZones.firstObject);data[@"protectedBackBlocked"]=@(![self canStartBackAtPoint:CGPointMake(CGRectGetMidX(zone),CGRectGetMidY(zone)) velocity:CGPointMake(700,0)]);}
     [self.web evaluateJavaScript:@"({path:location.pathname,index:history.state?.idx,draft:document.querySelector('textarea')?.value || ''})" completionHandler:^(id result,NSError *error){
         if([result isKindOfClass:NSDictionary.class])[data addEntriesFromDictionary:result];if(error)data[@"error"]=error.localizedDescription;
         NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;

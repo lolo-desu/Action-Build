@@ -139,7 +139,7 @@ for stage,data in stages.items():
     assert 'error' not in data and data['documentLoads']==1,data
 root,push,cancel,done,detail,chat,restored=[stages[s] for s in ['root','push','cancel-preview','cancelled','detail-preview','chat-return','restored']]
 assert root['path']=='/matches' and root['nativeNavVisible'],root
-assert push['fullWidthBack'] and push['centerBackAllowed'],push
+assert push['fullWidthBack'] and push['centerBackAllowed'] and push['protectedBackBlocked'],push
 assert push['path']=='/matches/thread' and push['canPreviewParent'] and not push['nativeNavVisible'],push
 assert cancel['interactive'] and cancel['previewKey']==root['currentKey'] and abs(cancel['progress']-.45)<.001,cancel
 assert abs(cancel['webTranslation']-cancel['webWidth']*.45)<1,cancel

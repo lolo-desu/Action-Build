@@ -102,10 +102,14 @@
     }
     return false;
   }
-  let zonesFingerprint='';
+  let zonesFingerprint='',zoneFrame=false,observedMain=null;
+  const zoneObserver=new ResizeObserver(scheduleGestureZones);
+  function scheduleGestureZones(){if(!zoneFrame){zoneFrame=true;requestAnimationFrame(()=>{zoneFrame=false;updateGestureZones();});}}
   function updateGestureZones() {
-    const main=document.getElementById('main');if(!main)return;
-    const elements=new Set(main.querySelectorAll('.stage,.cursor-grab,.overflow-x-auto,.overflow-x-scroll,.snap-x,[role="slider"],input,textarea,[contenteditable="true"],button,[role="button"]'));
+    const main=document.getElementById('main');
+    if(main!==observedMain){zoneObserver.disconnect();observedMain=main;if(main)zoneObserver.observe(main);}
+    if(!main){if(zonesFingerprint!=='[]'){zonesFingerprint='[]';post({kind:'gestureZones',zones:[]});}return;}
+    const elements=new Set(main.querySelectorAll('.stage,.cursor-grab,.overflow-x-auto,.overflow-x-scroll,.snap-x,[role="slider"],[role="scrollbar"],[draggable="true"],input,textarea,[contenteditable="true"],button,[role="button"],video,canvas'));
     const visible=new Set();
     for(let x=0;x<5;x++)for(let y=0;y<9;y++){
       let el=document.elementFromPoint((x+.5)*innerWidth/5,(y+.5)*innerHeight/9);
@@ -115,9 +119,26 @@
       const style=getComputedStyle(el);
       if((['auto','scroll'].includes(style.overflowX)&&el.scrollWidth>el.clientWidth+4)||style.touchAction==='pan-y'||style.touchAction==='none')elements.add(el);
     }
-    const zones=[...elements].filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight}).slice(0,100).map(el=>box(el));
+    const zones=[];
+    for(const el of elements){
+      const r=el.getBoundingClientRect();let left=Math.max(0,r.left),right=Math.min(innerWidth,r.right),top=Math.max(0,r.top),bottom=Math.min(innerHeight,r.bottom);
+      if(right<=left||bottom<=top)continue;
+      for(let node=el;node&&node!==document.body;node=node.parentElement){
+        const style=getComputedStyle(node);
+        if(style.visibility==='hidden'||style.display==='none'){right=left;break;}
+        if(node===el)continue;
+        const clip=node.getBoundingClientRect();
+        if(style.overflowX!=='visible'){left=Math.max(left,clip.left);right=Math.min(right,clip.right);}
+        if(style.overflowY!=='visible'){top=Math.max(top,clip.top);bottom=Math.min(bottom,clip.bottom);}
+        if(right<=left||bottom<=top)break;
+      }
+      if(right>left&&bottom>top)zones.push({x:left,y:top,width:right-left,height:bottom-top});
+      if(zones.length===100)break;
+    }
     const fingerprint=JSON.stringify(zones);if(fingerprint!==zonesFingerprint){zonesFingerprint=fingerprint;post({kind:'gestureZones',zones});}
   }
+  document.addEventListener('scroll',scheduleGestureZones,{capture:true,passive:true});
+  document.addEventListener('pointerdown',updateGestureZones,{capture:true,passive:true});
   document.addEventListener('selectionchange',()=>post({kind:'selection',selected:!getSelection()?.isCollapsed}));
   const icons = new Map();
   function rasterIcon(svg, color) {

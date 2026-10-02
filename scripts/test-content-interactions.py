@@ -20,6 +20,11 @@ with sync_playwright() as p:
  for selector in ['.stage','.carousel','#action']:
   r=page.locator(selector).bounding_box();x,y=r['x']+r['width']/2,r['y']+r['height']/2
   assert any(z['x']<=x<=z['x']+z['width'] and z['y']<=y<=z['y']+z['height'] for z in zones),(selector,zones)
+ page.evaluate("const main=document.getElementById('main');main.style.height='220px';main.style.overflowY='auto'")
+ page.wait_for_function("nativeMessages.filter(m=>m.kind==='gestureZones').at(-1).zones.every(z=>z.y+z.height<=document.getElementById('main').getBoundingClientRect().bottom+1)")
+ page.evaluate("document.getElementById('main').scrollTop=170")
+ page.wait_for_function("nativeMessages.filter(m=>m.kind==='gestureZones').at(-1).zones.some(z=>z.y<=document.querySelector('.carousel').getBoundingClientRect().top+1&&z.y+z.height>=document.querySelector('.carousel').getBoundingClientRect().bottom-1)")
+ page.evaluate("document.getElementById('main').scrollTop=0")
  page.evaluate("const range=document.createRange();range.selectNodeContents(document.getElementById('message'));getSelection().removeAllRanges();getSelection().addRange(range)")
  page.wait_for_function("nativeMessages.some(m=>m.kind==='selection'&&m.selected)")
  assert page.evaluate('getSelection().toString()')=='聊天文字可以选择复制'
@@ -27,4 +32,4 @@ with sync_playwright() as p:
  page.emulate_media(reduced_motion='reduce');page.click('#action')
  assert page.locator('#action').evaluate('e=>e.getAnimations().length')==0
  browser.close()
-print('PASS: chat/post/profile text selection and context menus; card/control exclusion; horizontal gesture zones; selection suspends back; reduced-motion animation behavior')
+print('PASS: chat/post/profile text selection and context menus; card/control exclusion; horizontal zones follow nested scroll and clipping; selection suspends back; reduced-motion animation behavior')
