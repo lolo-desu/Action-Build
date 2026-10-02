@@ -18,7 +18,7 @@ button{font:14px system-ui;padding:8px;border:0;border-radius:10px;background:#d
 .app-bottom a[aria-current="page"]{color:rgb(var(--primary));font-weight:600}.app-bottom svg{display:block;height:22px;width:22px}.app-bottom .icon{position:relative}.badge{position:absolute;top:-6px;right:-12px;border-radius:9px;min-width:18px;padding:0 6px;font-size:11px;line-height:18px;color:white;background:rgb(var(--primary))}
 </style></head><body>
 <div class="shell h-dvh"><header class="app-top">网站布局验证</header><main id="main"><section class="chat">
-<header class="chat-header">聊天</header><div class="messages">虚构测试消息，用于检查键盘首次弹出和再次弹出。</div>
+<header class="chat-header">聊天</header><div class="messages"><div style="height:900px">虚构的较早消息</div><p data-last-message>最后一条测试消息，键盘打开时仍应可见。</p></div>
 <form class="composer"><textarea placeholder="消息"></textarea><button type="button">发送</button></form>
 <div class="note">本页面只在模拟器测试构建中使用。</div>
 </section></main></div><nav class="app-bottom">
@@ -34,5 +34,6 @@ history.replaceState({idx:0,key:'initial'},'',location.href);
 function active(){document.querySelectorAll('.app-bottom a').forEach(a=>{if(location.pathname===a.getAttribute('href')||location.pathname.startsWith(a.getAttribute('href')+'/'))a.setAttribute('aria-current','page');else a.removeAttribute('aria-current')})}
 document.querySelectorAll('.app-bottom a').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();window.__fixtureClicks++;history.pushState({idx:(history.state?.idx??0)+1,key:Math.random().toString()},'',a.getAttribute('href'));active()}));
 window.addEventListener('popstate',active);active();
+setTimeout(()=>{const pane=document.querySelector('.messages');pane.scrollTop=pane.scrollHeight;pane.dispatchEvent(new Event('scroll'));},300);
 </script>
 </body></html>

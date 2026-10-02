@@ -5,6 +5,15 @@
   const css = `
     html, body { touch-action: manipulation; }
     * { -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }
+    #main, #main *, [role="dialog"], [role="dialog"] * {
+      -webkit-user-select: text !important; user-select: text !important; -webkit-touch-callout: default !important;
+    }
+    #main .stage, #main .stage *, #main button, #main button *,
+    #main [role="button"], #main [role="button"] *,
+    #main svg, #main svg *, #main img, #main video, #main canvas,
+    [role="dialog"] button, [role="dialog"] button *, [role="dialog"] [role="button"], [role="dialog"] [role="button"] * {
+      -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important;
+    }
     input, textarea, [contenteditable]:not([contenteditable="false"]),
     input *, textarea *, [contenteditable]:not([contenteditable="false"]) * {
       -webkit-user-select: text !important; user-select: text !important;
@@ -42,7 +51,9 @@
     attributeFilter: ['content', 'name'] });
   document.addEventListener('contextmenu', event => {
     const el = event.target instanceof Element ? event.target : event.target.parentElement;
-    if (!el?.closest('input, textarea, [contenteditable]:not([contenteditable="false"])')) event.preventDefault();
+    const editing = el?.closest('input, textarea, [contenteditable]:not([contenteditable="false"])');
+    const reading = el?.closest('#main,[role="dialog"]') && !el.closest('.stage,button,[role="button"],svg,img,video,canvas');
+    if (!editing && !reading) event.preventDefault();
   }, true);
   apply();
 })();

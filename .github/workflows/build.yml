@@ -37,6 +37,7 @@ jobs:
           path: |
             build/ERPStable-unsigned.ipa
             build/SHA256.txt
+            build/notification-content.json
             build/layout-first.json
             build/layout-reopened.json
             build/web-keyboard.png

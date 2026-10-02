@@ -38,7 +38,7 @@
 - (instancetype)initWithWebView:(WKWebView *)web navigation:(UIView *)navigation header:(UIView *)header {
     if(!(self=[super init]))return nil;
     self.web=web;self.navigation=navigation;self.header=header;self.currentKey=@"";self.currentPath=@"";
-    self.images=[NSCache new];self.images.countLimit=8;self.images.totalCostLimit=40*1024*1024;self.paths=[NSMutableDictionary new];
+    self.images=[NSCache new];self.images.countLimit=12;self.images.totalCostLimit=60*1024*1024;self.paths=[NSMutableDictionary new];
     self.underlay=[UIImageView new];self.underlay.contentMode=UIViewContentModeScaleToFill;self.underlay.hidden=YES;self.underlay.userInteractionEnabled=NO;
     [web.superview insertSubview:self.underlay belowSubview:web];
     self.shade=[UIView new];self.shade.backgroundColor=UIColor.blackColor;[self.underlay addSubview:self.shade];
@@ -108,10 +108,14 @@
     if([direction isEqual:@"push"]) {
         self.underlay.image=old.image;self.underlay.hidden=old==nil;self.previewKey=oldKey;
         self.underlay.transform=CGAffineTransformIdentity;self.shade.alpha=0;
+        VRPageImage *warm=[self.images objectForKey:self.paths[path]?:@""];
+        self.outgoing.image=warm.image;self.outgoing.hidden=warm==nil;
+        self.outgoing.transform=CGAffineTransformMakeTranslation(width,0);
         self.web.transform=CGAffineTransformMakeTranslation(width,0);[self shadow:YES];
         [UIView animateWithDuration:.32 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
-            self.web.transform=CGAffineTransformIdentity;self.underlay.transform=CGAffineTransformMakeTranslation(-width*.27,0);self.shade.alpha=.2;
-        } completion:^(BOOL finished){if(generation==self.generation)[self complete];}];
+            self.web.transform=CGAffineTransformIdentity;self.outgoing.transform=CGAffineTransformIdentity;self.underlay.transform=CGAffineTransformMakeTranslation(-width*.27,0);self.shade.alpha=.2;
+        } completion:^(BOOL finished){if(generation!=self.generation)return;self.animationDone=YES;if(self.routeReady||!self.outgoing.image)[self complete];}];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,1500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{if(generation==self.generation)[self complete];});
     } else {
         VRPageImage *target=[self.images objectForKey:key]?:[self.images objectForKey:self.paths[path]?:@""];
         self.underlay.image=target.image;self.underlay.hidden=target==nil;self.previewKey=key;

@@ -10,5 +10,9 @@ CGRect VRRect(id value);
 - (BOOL)applyModel:(NSDictionary *)model webFrame:(CGRect)webFrame;
 - (void)layoutForWebFrame:(CGRect)webFrame;
 - (void)cancelPendingSelection;
+#if ERP_TESTING
+- (NSDictionary *)verifySelection;
+- (void)verifyIntermediateWebColor;
+#endif
 @end
 NS_ASSUME_NONNULL_END

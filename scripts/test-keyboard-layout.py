@@ -23,7 +23,7 @@ textarea{flex:1;min-width:0;height:44px;font-size:14px} .local-note{font-size:11
 .app-bottom{position:fixed;left:0;right:0;bottom:0;height:64px;border-top:1px solid}
 </style></head><body><div class="shell h-dvh"><header class="app-top">Site navigation</header>
 <main id="main"><section class="chat"><header class="chat-header">Chat</header>
-<div class="messages">Latest messages</div><form class="composer"><textarea aria-label="Message"></textarea><button>Send</button></form>
+<div class="messages"><div style="height:900px">Older messages</div><p data-last-message>Latest message</p></div><form class="composer"><textarea aria-label="Message"></textarea><button>Send</button></form>
 <div class="local-note">Chat history saved locally</div></section></main></div>
 <nav class="app-bottom">Tabs</nav></body></html>"""
 
@@ -47,6 +47,7 @@ with sync_playwright() as p:
     assert baseline.evaluate(measure) == page.evaluate(measure), "website appearance changed"
     assert page.locator('textarea').evaluate("e => getComputedStyle(e).userSelect") == 'text'
     baseline.close()
+    page.locator(".messages").evaluate("e=>{e.scrollTop=e.scrollHeight;e.dispatchEvent(new Event('scroll'))}")
     page.locator("textarea").focus()
     for height in [434, 793, 402, 440, 793, 434]:
         page.set_viewport_size({"width": 393, "height": height})
@@ -55,10 +56,18 @@ with sync_playwright() as p:
         metrics = page.evaluate("""() => {
             const box = document.querySelector('textarea').getBoundingClientRect();
             const nav = document.querySelector('.app-bottom').getBoundingClientRect();
-            return {top:box.top,bottom:box.bottom,navTop:nav.top,scroll:document.documentElement.scrollHeight};
+            const pane=document.querySelector('.messages');return {top:box.top,bottom:box.bottom,navTop:nav.top,scroll:document.documentElement.scrollHeight,gap:pane.scrollHeight-pane.scrollTop-pane.clientHeight,last:document.querySelector('[data-last-message]').getBoundingClientRect().bottom,paneBottom:pane.getBoundingClientRect().bottom};
         }""")
         assert metrics["top"] >= 0 and metrics["bottom"] <= metrics["navTop"], metrics
         assert metrics["scroll"] <= height, metrics
+        assert metrics["gap"]<2 and metrics["last"]<=metrics["paneBottom"]+1,metrics
+    # Browsing older messages must preserve its position when the pane resizes.
+    page.locator('.messages').evaluate("e=>{e.scrollTop=120;e.dispatchEvent(new Event('scroll'))}")
+    page.evaluate('__vrcrpSetViewport({width:393,height:420,keyboardVisible:true})')
+    assert page.locator('.messages').evaluate('e=>e.scrollTop')==120
+    page.evaluate('__vrcrpSetViewport({width:393,height:434,keyboardVisible:true})')
+    assert page.locator('.messages').evaluate('e=>e.scrollTop')==120
+    page.locator('.messages').evaluate("e=>{e.scrollTop=e.scrollHeight;e.dispatchEvent(new Event('scroll'))}")
     page.locator("textarea").evaluate("el => el.style.height='100px'")
     metrics = page.evaluate("""() => ({bottom:document.querySelector('textarea').getBoundingClientRect().bottom,
         navTop:document.querySelector('.app-bottom').getBoundingClientRect().top})""")
@@ -79,4 +88,4 @@ with sync_playwright() as p:
     assert page.locator("body").evaluate("el => getComputedStyle(el).overflow") != "hidden"
     assert page.locator('.h-dvh').evaluate("e => e.getBoundingClientRect().height") == 793, "non-chat layout must retain its original height rules"
     browser.close()
-print("PASS: original fonts/layout, first keyboard presentation, hide/reopen, height changes, multiline composer, stale dvh and paused paint frames, invalid viewport and unchanged non-chat layout")
+print("PASS: original fonts/layout, first keyboard presentation, hide/reopen, height changes, latest message and reader position, multiline composer, stale dvh and paused paint frames, invalid viewport and unchanged non-chat layout")

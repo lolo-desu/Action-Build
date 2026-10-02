@@ -102,6 +102,23 @@
     }
     return false;
   }
+  let zonesFingerprint='';
+  function updateGestureZones() {
+    const main=document.getElementById('main');if(!main)return;
+    const elements=new Set(main.querySelectorAll('.stage,.cursor-grab,.overflow-x-auto,.overflow-x-scroll,.snap-x,[role="slider"],input,textarea,[contenteditable="true"],button,[role="button"]'));
+    const visible=new Set();
+    for(let x=0;x<5;x++)for(let y=0;y<9;y++){
+      let el=document.elementFromPoint((x+.5)*innerWidth/5,(y+.5)*innerHeight/9);
+      for(let n=0;el&&main.contains(el)&&n<20;n++,el=el.parentElement)visible.add(el);
+    }
+    for(const el of visible){
+      const style=getComputedStyle(el);
+      if((['auto','scroll'].includes(style.overflowX)&&el.scrollWidth>el.clientWidth+4)||style.touchAction==='pan-y'||style.touchAction==='none')elements.add(el);
+    }
+    const zones=[...elements].filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight}).slice(0,100).map(el=>box(el));
+    const fingerprint=JSON.stringify(zones);if(fingerprint!==zonesFingerprint){zonesFingerprint=fingerprint;post({kind:'gestureZones',zones});}
+  }
+  document.addEventListener('selectionchange',()=>post({kind:'selection',selected:!getSelection()?.isCollapsed}));
   const icons = new Map();
   function rasterIcon(svg, color) {
     let source = svg.outerHTML.replace(/currentColor/g, color);
@@ -155,7 +172,8 @@
       if(owner!==settleGeneration || key!==entryKey())return;
       const main=document.getElementById('main'), chat=/^\/matches\/[^/]+$/.test(location.pathname);
       const editor=chat?main?.querySelector('textarea'):null;
-      const usable=main && (chat ? editor || main.querySelector('.card button,[role="alert"]') : main.children.length);
+      const loading=main?.querySelector('.animate-spin,[role="progressbar"]') && !main?.querySelector('textarea,article,.bubble-me,.bubble-them');
+      const usable=main && !loading && (chat ? editor || main.querySelector('.card button,[role="alert"]') : main.children.length);
       const scrolls=main?[...main.querySelectorAll('.overflow-y-auto,.messages')]:[];
       const pendingHeight=saved?.scrollers?.some((s,i)=>s.top>0 && scrolls[i] && scrolls[i].scrollHeight-scrolls[i].clientHeight<s.top-1);
       if ((!usable || pendingHeight) && performance.now()-started<1400){setTimeout(attempt,35);return;}
@@ -218,7 +236,7 @@
     const navHeight = nav && getComputedStyle(nav).display !== 'none' ? nav.getBoundingClientRect().height : 0;
     setProperty('--vrcrp-nav-space', `${showTabs ? navHeight : 0}px`);
     fitSwipeControls(showTabs ? navHeight : 0);
-    updateTopSurface();
+    updateTopSurface(); updateGestureZones();
     let model = { kind: 'navigation', visible: false, overlay: false };
     if (nav && anchors.length === 5 && getComputedStyle(nav).display !== 'none' && nav.getBoundingClientRect().width > 0) {
       const rect = nav.getBoundingClientRect();
@@ -249,7 +267,7 @@
       let background = rgba(navStyle.backgroundColor);
       if (background[3] < .05) background = rgba(getComputedStyle(document.body).backgroundColor);
       const theme=getComputedStyle(root);
-      model = { kind: 'navigation', visible, overlay, frame: box(nav), bottomPadding: parseFloat(navStyle.paddingBottom) || 0, background, borderColor: rgba(navStyle.borderTopColor), borderWidth: parseFloat(navStyle.borderTopWidth) || 0, selectedColor:rgba('rgb('+theme.getPropertyValue('--primary').trim()+')'),mutedColor:items.find(i=>!i.selected)?.color || [0.45,0.5,0.6,1], items };
+      model = { kind: 'navigation', visible, overlay, frame: box(nav), bottomPadding: parseFloat(navStyle.paddingBottom) || 0, background, borderColor: rgba(navStyle.borderTopColor), borderWidth: parseFloat(navStyle.borderTopWidth) || 0, selectedColor:rgba('rgb('+theme.getPropertyValue('--primary').trim()+')'),mutedColor:theme.getPropertyValue('--muted').trim()?rgba('rgb('+theme.getPropertyValue('--muted').trim()+')'):items.find(i=>!i.selected)?.color || [0.45,0.5,0.6,1], items };
     }
     const fingerprint = JSON.stringify(model);
     if (fingerprint !== navFingerprint) { navFingerprint = fingerprint; post(model); }

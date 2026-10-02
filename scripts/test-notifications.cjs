@@ -5,7 +5,7 @@ function fixture(origin='https://erp.sex') {
  class Socket extends EventTarget { static OPEN=1; constructor(url){super();this.url=url;this.readyState=1} incoming(value){this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(value)}))} }
  const document=new EventTarget();document.hidden=false;
  const location={origin,host:new URL(origin).host,href:origin+'/matches',pathname:'/matches'};
- const server={me:{id:'self'},counters:{unreadMessages:3},matches:{items:[{id:'thread',user:{displayName:'测试联系人'},unreadCount:3,lastMessage:{id:'old',senderId:'peer',type:'text',text:'old preview',createdAt:'2020-01-01T00:00:00Z'}}]}};
+ const server={me:{id:'self'},counters:{unreadMessages:3},matches:{items:[{id:'thread',user:{id:'peer',displayName:'测试联系人',avatar:{view:'show',thumbUrl:'https://erp.sex/avatar-test.png'}},unreadCount:3,lastMessage:{id:'old',senderId:'peer',type:'text',text:'old preview',createdAt:'2020-01-01T00:00:00Z'}}]}};
  const window=new EventTarget();window.top=window;window.WebSocket=Socket;window.webkit={messageHandlers:{erpNativeNotifications:{postMessage:v=>messages.push(v)}}};
  window.fetch=(url,options)=>{requests.push([String(url),options]);let body=String(url).includes('/me/counters')?server.counters:String(url).includes('/matches')?server.matches:server.me;window.lastPromise=Promise.resolve(new Response(JSON.stringify(body),{status:200}));return window.lastPromise};
  const context={window,document,location,navigator:{onLine:true,language:'zh',userAgent:'fixture'},URL,Request,Response,Headers,MessageEvent,Reflect,Proxy,Number,JSON,Date,Set,Map,Array,Math,AbortController,
@@ -23,7 +23,7 @@ function fixture(origin='https://erp.sex') {
  socket.incoming({type:'message.new',data:{id:'incoming',matchId:'thread',senderId:'peer',type:'text',text:'新消息预览'}});
  socket.incoming({type:'message.new',data:{id:'incoming',matchId:'thread',senderId:'peer',type:'text',text:'duplicate'}});
  await f.run(0);assert(invalidations>0,'real-time list invalidation missing');
- const alerts=()=>f.messages.filter(m=>m.kind==='chatMessage');assert.equal(alerts().length,1);assert.equal(alerts()[0].title,'测试联系人');assert.equal(alerts()[0].body,'新消息预览');assert.equal(alerts()[0].matchId,'thread');
+ const alerts=()=>f.messages.filter(m=>m.kind==='chatMessage');assert.equal(alerts().length,1);assert.equal(alerts()[0].title,'测试联系人');assert.equal(alerts()[0].body,'新消息预览');assert.equal(alerts()[0].matchId,'thread');assert.equal(alerts()[0].displayId,'peer');assert.equal(alerts()[0].avatarURL,'https://erp.sex/avatar-test.png');
  socket.incoming({type:'counters',data:{unreadMessages:4}});assert(![...f.timers.values()].some(t=>t.delay===2200),'counter duplicated a message notification');
  socket.incoming({type:'message.new',data:{id:'outgoing',matchId:'thread',senderId:'self',type:'text',text:'own'}});assert.equal(alerts().length,1);
  f.location.pathname='/matches/thread';socket.incoming({type:'message.new',data:{id:'reading',matchId:'thread',senderId:'peer',type:'text',text:'reading'}});assert.equal(alerts().length,1,'currently open chat alerted');

@@ -7,5 +7,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)handleEvent:(NSDictionary *)event;
 - (void)beginBackgroundSync;
 - (void)endBackgroundSync;
+#if ERP_TESTING
+- (NSDictionary *)verifyNotificationContent;
+#endif
 @end
 NS_ASSUME_NONNULL_END

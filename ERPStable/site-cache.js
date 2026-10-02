@@ -95,7 +95,11 @@
   function descriptor(url, method = 'GET') {
     if (method !== 'GET' || url.origin !== location.origin || !user) return null;
     const m = url.pathname.match(/^\/api\/v1\/matches\/([\w-]{1,120})(\/messages)?$/);
-    if (!m) return null;
+    if (!m) {
+      if (!/^\/api\/v1\/(notifications|posts|worlds|users|profiles|likes|visitors)(?:\/|$)/.test(url.pathname)) return null;
+      if (/\/(auth|token|export|download|check|verify)(?:\/|$)/.test(url.pathname)) return null;
+      return { page:true, url, key:JSON.stringify([user,headers['X-Content-Mode'],headers['Accept-Language'] || '',url.pathname+url.search]) };
+    }
     if (m[2] && (url.searchParams.has('before') || url.searchParams.has('after') || url.searchParams.get('limit') && url.searchParams.get('limit') !== '50')) return null;
     return { id: m[1], messages: !!m[2], url, key: JSON.stringify([user,headers['X-Content-Mode'],headers['Accept-Language'] || '',url.pathname + url.search]) };
   }
@@ -105,8 +109,21 @@
     if (d.messages ? !Array.isArray(value?.items) : !value || typeof value !== 'object') return;
     const text = JSON.stringify(raw); if (text.length > 1024 * 1024) return;
     bodies.delete(d.key); bodies.set(d.key,{ d, raw, text, at: Date.now(), headers: [...response.headers] });
-    while (bodies.size > 24 || [...bodies.values()].reduce((n,b) => n + b.text.length,0) > 4 * 1024 * 1024) bodies.delete(bodies.keys().next().value);
-    if (!d.messages) commitDetail(d.id, value);
+    while (bodies.size > 32 || [...bodies.values()].reduce((n,b) => n + b.text.length,0) > 6 * 1024 * 1024) bodies.delete(bodies.keys().next().value);
+    if (d.page) {
+      const c=client();
+      // Update already-existing notification queries after validating warm data.
+      // Do not guess keys for unrelated profile, post or world queries.
+      if(c && d.url.pathname==='/api/v1/notifications' && !d.url.searchParams.has('cursor')) {
+        for(const q of c.getQueryCache().getAll())if(q.queryKey.some(k=>k==='notifications') && (q.queryKey[0]!=='m'||q.queryKey[1]===headers['X-Content-Mode']&&(!headers['Accept-Language']||q.queryKey[2]===headers['Accept-Language']))) {
+          c.setQueryData(q.queryKey,old=>{
+            if(!old)return old;
+            if(old.pages?.length&&Array.isArray(value.items))return {...old,pages:[value,...old.pages.slice(1)]};
+            return Array.isArray(old.items)&&Array.isArray(value.items)?value:old;
+          });
+        }
+      }
+    } else if (!d.messages) commitDetail(d.id, value);
     else if (prior && location.pathname === '/matches/' + d.id) {
       const old = new Map((unwrap(prior.raw)?.items || []).map(m => [m.id,m]));
       for (const m of value.items) {
@@ -148,6 +165,10 @@
         if (['sfw','mixed','r18'].includes(h.get('X-Content-Mode'))) next['X-Content-Mode'] = h.get('X-Content-Mode');
         if (h.get('Accept-Language')) next['Accept-Language'] = h.get('Accept-Language');
         configure(next);
+        if(method!=='GET'&&/^\/api\/v1\/(notifications|posts|worlds|users|profiles|likes|visitors)(?:\/|$)/.test(url.pathname)) {
+          const category=url.pathname.split('/')[3];
+          for(const [key,b] of bodies)if(b.d.page&&b.d.url.pathname.split('/')[3]===category)bodies.delete(key);
+        }
         if (method !== 'GET' && /^\/api\/v1\/(matches|messages|auth)\//.test(url.pathname)) {
           const match = url.pathname.match(/^\/api\/v1\/matches\/([\w-]+)(?:\/|$)/);
           const recall = url.pathname.match(/^\/api\/v1\/messages\/([\w-]+)\/recall$/);
@@ -163,7 +184,7 @@
       if (mutation) result.then(response => { if (response.ok) response.clone().json().then(raw => { if (owner === epoch) serverEvent('message.new',{...unwrap(raw),matchId:mutation}); }).catch(() => {}); }).catch(() => {});
       return result;
     }
-    const cached = bodies.get(d.key), maxAge = d.messages ? 90000 : 30000;
+    const cached = bodies.get(d.key), maxAge = d.messages ? 90000 : d.page ? 300000 : 30000;
     if (cached && Date.now() - cached.at < maxAge) {
       const owner = epoch;
       // Serve the warm page immediately; validate in the background.
@@ -214,6 +235,11 @@
   window.__vrcrpSiteCache = {
     session(id, nextHeaders) { reset(id); if (nextHeaders) configure(nextHeaders); },
     active(value) { active = value === true; }, commitCounters, commitMatches, refreshList, warmList, prefetch, serverEvent,
+    refreshPage() {
+      const c=client();if(!c)return false;
+      for(const [key,b] of bodies)if(b.d.page)bodies.delete(key);
+      c.invalidateQueries({refetchType:'active'}).catch(()=>{});return true;
+    },
     states() { const c = client(); return c ? [...new Set(scopes(c).filter(q => q.getObserversCount() > 0 && q.queryKey[3] === 'matches' && q.queryKey.length === 5).map(q => q.queryKey[4]))].filter(s => s === 'active' || s === 'unmatched') : ['active']; },
     async refreshChat() {
       const m = location.pathname.match(/^\/matches\/([\w-]{1,120})$/); if (!m || !active || document.hidden) return;

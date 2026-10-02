@@ -10,9 +10,10 @@ window.fixtureClient=client;window.fixtureBoots=(window.fixtureBoots||0)+1;
 function Chat({id}){
  const detail=useQuery({queryKey:['m','sfw','zh','matches','detail',id],queryFn:()=>get('/matches/'+id)});
  const [messages,setMessages]=React.useState([]),[loading,setLoading]=React.useState(true);
+ window.fixturePending=()=>{const pending={id:'pending-test',matchId:id,senderId:'self',type:'text',text:'待发送内容',createdAt:new Date().toISOString(),pending:true};setMessages(old=>[...old,pending].sort((a,b)=>a.createdAt<b.createdAt?-1:1));};
  React.useEffect(()=>{let alive=true;setLoading(true);get('/matches/'+id+'/messages?limit=50').then(v=>{if(alive){setMessages(v.items);setLoading(false)}}).catch(()=>{if(alive)setLoading(false)});return()=>{alive=false}},[id]);
  React.useEffect(()=>bus.on('message.new',m=>{if(m.matchId===id)setMessages(old=>{const map=new Map(old.map(v=>[v.id,v]));map.set(m.id,m);return [...map.values()]})}),[id]);
- return <main id="main"><section className="card"><header>{detail.data?.user.displayName||'载入资料'}</header><div className="messages">{loading?'载入消息':messages.map(m=><p key={m.id} data-id={m.id}>{m.recalled?'已撤回':m.text}</p>)}</div><textarea placeholder="消息"/><button onClick={()=>window.fixtureOpen('/u/peer')}>资料</button></section></main>;
+ return <main id="main"><section className="card"><header>{detail.data?.user.displayName||'载入资料'}</header><div className="messages">{loading?'载入消息':messages.map(m=><p className={m.senderId==='self'?'bubble-me':'bubble-them'} key={m.id} data-id={m.id}>{m.recalled?'已撤回':m.text}</p>)}</div><textarea placeholder="消息"/><button onClick={()=>window.fixtureOpen('/u/peer')}>资料</button></section></main>;
 }
 function List(){
  const [state,setState]=React.useState('active');

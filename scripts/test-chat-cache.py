@@ -14,7 +14,7 @@ with sync_playwright() as p:
  browser=p.chromium.launch(executable_path=os.environ.get('CHROMIUM_PATH','/usr/bin/chromium'),args=['--no-sandbox'])
  page=browser.new_page(viewport={'width':393,'height':793},is_mobile=True,has_touch=True)
  page.add_init_script("window.nativeMessages=[];window.webkit={messageHandlers:{erpNativeApp:{postMessage:m=>nativeMessages.push(m)},erpNativeNotifications:{postMessage:m=>nativeMessages.push(m)}}}")
- for name in ['site-cache','notifications','app-experience']:page.add_init_script((root/'ERPStable'/f'{name}.js').read_text())
+ for name in ['site-cache','notifications','app-experience','content-experience']:page.add_init_script((root/'ERPStable'/f'{name}.js').read_text())
  def handle(route):
   url=urlparse(route.request.url);q=parse_qs(url.query)
   if url.path.startswith('/api/'):
@@ -22,6 +22,7 @@ with sync_playwright() as p:
    if server['offline']:route.abort();return
    if url.path.endswith('/me/counters'):value={'unreadMessages':server['active']['items'][0]['unreadCount']}
    elif url.path.endswith('/me'):value={'id':'self'}
+   elif url.path.endswith('/notifications'):value={'items':[{'id':'n-test','text':'通知缓存测试'}],'nextCursor':None}
    elif url.path.endswith('/messages'):value=server['messages']
    elif url.path.endswith('/matches'):value=server.get('older',server['active']) if q.get('cursor') else server[q.get('state',['active'])[0]]
    else:value={'id':url.path.rsplit('/',1)[-1],'user':{'displayName':'测试联系人'},'state':'active'}
@@ -55,6 +56,16 @@ with sync_playwright() as p:
  page.evaluate('__vrcrpSiteCache.refreshChat()');page.wait_for_selector('[data-id="new-real"]')
  assert page.locator('[data-id="old"]').count()==1
  assert not any(method!='GET' for _,_,method in requests),'cache/prefetch wrote server state'
+ # Pending items must follow server messages even with a future server clock.
+ server['messages']['items'].append({**old,'id':'future','text':'服务器时间较晚','createdAt':'2099-01-01T00:00:00Z'})
+ page.evaluate('__vrcrpSiteCache.refreshChat()');page.wait_for_selector('[data-id="future"]')
+ page.evaluate('fixturePending()');page.wait_for_function("document.querySelector('.messages').lastElementChild.dataset.id==='pending-test'")
+ assert page.evaluate("document.querySelector('[data-id=\"pending-test\"]').textContent")=='待发送内容'
+ # Other read-only screens also serve warm responses offline.
+ page.evaluate("fetch('/api/v1/notifications?limit=20').then(r=>r.json())")
+ page.wait_for_timeout(50);server['offline']=True
+ assert page.evaluate("fetch('/api/v1/notifications?limit=20').then(r=>r.json()).then(v=>v.items[0].text)")=='通知缓存测试'
+ server['offline']=False
  # A cursor response must keep the first page rather than replace it.
  page.evaluate('__vrcrpBack()');page.wait_for_selector('.more')
  server['active']['nextCursor']='older'
@@ -67,4 +78,4 @@ with sync_playwright() as p:
  server['offline']=True
  assert page.evaluate("fetch('/api/v1/matches/thread/messages?limit=50').then(()=>false,()=>true)")
  browser.close()
-print('PASS: real React/TanStack cache updates without WS; active/closed isolation and pagination; warm chat offline; draft restoration; real-message background merge; no reload/server writes/account cache reuse')
+print('PASS: real React/TanStack cache updates without WS; active/closed isolation and pagination; warm chat/notifications offline; pending after future-dated server messages; draft restoration; real-message background merge; no reload/server writes/account cache reuse')

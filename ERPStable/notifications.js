@@ -20,13 +20,19 @@
     if (message.type === 'system') return '有新的聊天动态';
     return Array.from(typeof message.text === 'string' ? message.text : '你有新的聊天消息').slice(0,140).join('');
   }
+  function peerInfo(peer) {
+    let avatarURL='';const media=peer?.avatar;
+    if(media?.view==='show')try{const url=new URL(media.thumbUrl||media.url,location.href);if(url.protocol==='https:'&&!url.username&&!url.password&&url.href.length<4096)avatarURL=url.href;}catch{}
+    return {title:String(peer?.displayName||'新聊天消息').slice(0,80),displayId:validId(peer?.id)?peer.id:'',avatarURL};
+  }
   function message(value, title) {
     if (!userId || !validId(value?.id) || !validId(value?.matchId) || seen.has(value.id)) return;
     remember(value.id);
     if (value.recalled || String(value.senderId) === userId) return;
     lastDetailed = Date.now(); clearTimeout(fallbackTimer);
     if (active && !document.hidden && location.pathname === '/matches/' + value.matchId) return;
-    post({ kind: 'chatMessage', messageId: value.id, matchId: value.matchId, senderId: String(value.senderId ?? ''), title: String(title || matches.get(value.matchId)?.title || '新聊天消息').slice(0,80), body: body(value) });
+    const peer=matches.get(value.matchId)||{};
+    post({ kind: 'chatMessage', messageId: value.id, matchId: value.matchId, senderId: String(value.senderId ?? ''), title: String(title || peer.title || '新聊天消息').slice(0,80), displayId:peer.displayId || String(value.senderId ?? ''), avatarURL:peer.avatarURL || '', body: body(value) });
   }
   function counters(value) {
     const count = value?.unreadMessages;
@@ -58,13 +64,13 @@
     for (const item of value.items.slice(0,200)) {
       const id = String(item.id ?? ''), latest = item.lastMessage;
       if (!validId(id)) continue;
-      const title = String(item.user?.displayName || '新聊天消息').slice(0,80), prior = matches.get(id);
+      const info=peerInfo(item.user),title=info.title,prior=matches.get(id);
+      matches.set(id,{...info,messageId:latest?.id});
       const created = Date.parse(latest?.createdAt);
       if (latest?.id && prior && prior.messageId !== latest.id && item.unreadCount > 0) message({ ...latest, matchId: id }, title);
       else if (latest?.id && !prior && Number.isFinite(created) && created >= sessionStarted && item.unreadCount > 0) message({ ...latest, matchId: id }, title);
       if (latest?.id) remember(latest.id);
-      matches.set(id,{ title, messageId: latest?.id });
-      summaries.push({ matchId: id, title, messageId: latest?.id || '', unread: item.unreadCount || 0 });
+      summaries.push({ matchId: id, ...info, messageId: latest?.id || '', unread: item.unreadCount || 0 });
     }
     post({ kind: 'snapshot', items: summaries });
     if (firstPage) window.__vrcrpSiteCache?.commitMatches(value, state);

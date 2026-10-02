@@ -1,6 +1,7 @@
 #import "ChatNotifications.h"
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
+#import <ImageIO/ImageIO.h>
 
 static BOOL VRValidID(id value) {
     return [value isKindOfClass:NSString.class] && [value length]>0 && [value length]<=120 &&
@@ -26,12 +27,16 @@ static NSString *VRText(id value, NSUInteger limit, NSString *fallback) {
 @property(nonatomic) NSUInteger generation;
 @property(nonatomic) NSTimeInterval detailedAt;
 @property(nonatomic) BOOL requesting;
+@property(nonatomic, strong) NSCache<NSString *, NSData *> *avatars;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSMutableArray *> *avatarWaiters;
 @end
 @implementation ChatNotifications
 - (instancetype)initWithCookieStore:(WKHTTPCookieStore *)store {
     if (!(self=[super init])) return nil;
     self.store=store; self.userID=@""; self.activePath=@""; self.headers=@{};
     self.latest=[NSMutableDictionary new]; self.seen=[NSMutableOrderedSet new];
+    self.avatars=[NSCache new];self.avatars.countLimit=32;self.avatars.totalCostLimit=4*1024*1024;
+    self.avatarWaiters=[NSMutableDictionary new];
     self.backgroundTask=UIBackgroundTaskInvalid; self.unread=-1; self.started=NSDate.date;
     NSURLSessionConfiguration *config=NSURLSessionConfiguration.ephemeralSessionConfiguration;
     config.timeoutIntervalForRequest=12; config.timeoutIntervalForResource=18;
@@ -57,7 +62,78 @@ static NSString *VRText(id value, NSUInteger limit, NSString *fallback) {
     NSString *path=[@"/matches/" stringByAppendingString:matchID];
     if(UIApplication.sharedApplication.applicationState==UIApplicationStateActive&&[self.activePath isEqual:path])return;
     [UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:@[@"vrcrp-unread"]];
-    [self notifyTitle:VRText(event[@"title"],80,@"新聊天消息") body:VRText(event[@"body"],180,@"你有新的聊天消息") path:path identifier:[@"vrcrp-message-" stringByAppendingString:messageID] thread:matchID];
+    [self notifyMessage:event path:path identifier:[@"vrcrp-message-" stringByAppendingString:messageID] thread:matchID];
+}
+- (NSData *)avatarData:(NSData *)data {
+    if(!data.length||data.length>2*1024*1024)return nil;
+    CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)data,NULL);if(!source)return nil;
+    NSDictionary *options=@{(__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways:@YES,(__bridge NSString *)kCGImageSourceCreateThumbnailWithTransform:@YES,(__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize:@256};
+    CGImageRef thumbnail=CGImageSourceCreateThumbnailAtIndex(source,0,(__bridge CFDictionaryRef)options);CFRelease(source);if(!thumbnail)return nil;
+    UIImage *image=[UIImage imageWithCGImage:thumbnail];CGImageRelease(thumbnail);
+    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat new];format.scale=1;
+    UIImage *small=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(144,144) format:format] imageWithActions:^(UIGraphicsImageRendererContext *context){
+        [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(0,0,144,144)] addClip];
+        CGFloat scale=MAX(144/image.size.width,144/image.size.height);CGSize size=CGSizeMake(image.size.width*scale,image.size.height*scale);
+        [image drawInRect:CGRectMake((144-size.width)/2,(144-size.height)/2,size.width,size.height)];
+    }];return UIImagePNGRepresentation(small);
+}
+- (void)loadAvatar:(NSString *)value completion:(void (^)(NSData *))completion {
+    NSURL *url=[value isKindOfClass:NSString.class]&&value.length<4096?[NSURL URLWithString:value]:nil;
+    if(![url.scheme.lowercaseString isEqual:@"https"]||!url.host.length||url.user.length||url.password.length){completion(nil);return;}
+    NSData *cached=[self.avatars objectForKey:value];if(cached){completion(cached);return;}
+    if(self.avatarWaiters[value]){[self.avatarWaiters[value] addObject:[completion copy]];return;}
+    self.avatarWaiters[value]=[NSMutableArray arrayWithObject:[completion copy]];NSUInteger generation=self.generation;
+    NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:url];request.timeoutInterval=3;request.HTTPShouldHandleCookies=NO;
+    [[self.session dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){
+        dispatch_async(dispatch_get_main_queue(),^{
+            if(generation!=self.generation)return;
+            NSData *avatar=!error&&[(NSHTTPURLResponse *)response statusCode]==200?[self avatarData:data]:nil;
+            NSArray *waiters=[self.avatarWaiters[value] copy];[self.avatarWaiters removeObjectForKey:value];
+            if(avatar)[self.avatars setObject:avatar forKey:value cost:avatar.length];
+            for(void (^callback)(NSData *) in waiters)callback(avatar);
+        });
+    }] resume];
+}
+- (NSData *)initialAvatar:(NSString *)title {
+    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat new];format.scale=1;
+    UIImage *image=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(144,144) format:format] imageWithActions:^(UIGraphicsImageRendererContext *context){
+        [[UIColor colorWithRed:.22 green:.24 blue:.3 alpha:1] setFill];[[UIBezierPath bezierPathWithOvalInRect:CGRectMake(0,0,144,144)] fill];
+        NSString *initial=title.length?[title substringWithRange:[title rangeOfComposedCharacterSequenceAtIndex:0]]:@"聊";
+        NSDictionary *attributes=@{NSFontAttributeName:[UIFont systemFontOfSize:65 weight:UIFontWeightSemibold],NSForegroundColorAttributeName:UIColor.whiteColor};
+        CGSize size=[initial sizeWithAttributes:attributes];[initial drawAtPoint:CGPointMake((144-size.width)/2,(144-size.height)/2) withAttributes:attributes];
+    }];return UIImagePNGRepresentation(image);
+}
+- (UNMutableNotificationContent *)messageContent:(NSDictionary *)event path:(NSString *)path thread:(NSString *)thread avatar:(NSData *)avatar {
+    UNMutableNotificationContent *content=[UNMutableNotificationContent new];
+    content.title=VRText(event[@"title"],80,@"新聊天消息");content.body=VRText(event[@"body"],180,@"你有新的聊天消息");
+    NSString *displayID=VRText(event[@"displayId"],120,VRText(event[@"senderId"],120,@""));
+    if(displayID.length)content.subtitle=[@"ID: " stringByAppendingString:displayID];
+    content.sound=UNNotificationSound.defaultSound;if(self.unread>=0)content.badge=@(self.unread);
+    content.threadIdentifier=thread;content.categoryIdentifier=@"VRCRP_CHAT";content.userInfo=@{@"path":path};
+    NSData *picture=avatar?:[self initialAvatar:content.title];
+    NSURL *file=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"vrcrp-notification-%@.png",NSUUID.UUID.UUIDString]]];
+    if([picture writeToURL:file atomically:YES]){
+        UNNotificationAttachment *attachment=[UNNotificationAttachment attachmentWithIdentifier:@"sender-avatar" URL:file options:@{UNNotificationAttachmentOptionsThumbnailHiddenKey:@NO} error:nil];
+        if(attachment)content.attachments=@[attachment];
+        if(!attachment)[NSFileManager.defaultManager removeItemAtURL:file error:nil];
+    }return content;
+}
+- (void)notifyMessage:(NSDictionary *)event path:(NSString *)path identifier:(NSString *)identifier thread:(NSString *)thread {
+    NSUInteger generation=self.generation;
+    [UNUserNotificationCenter.currentNotificationCenter getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings){
+        if(settings.authorizationStatus!=UNAuthorizationStatusAuthorized&&settings.authorizationStatus!=UNAuthorizationStatusProvisional)return;
+        dispatch_async(dispatch_get_main_queue(),^{
+            __block BOOL finished=NO;
+            void (^deliver)(NSData *)=^(NSData *avatar){
+                if(finished||generation!=self.generation||!self.authenticated)return;finished=YES;
+                if(UIApplication.sharedApplication.applicationState==UIApplicationStateActive&&[self.activePath isEqual:path])return;
+                UNMutableNotificationContent *content=[self messageContent:event path:path thread:thread avatar:avatar];
+                [UNUserNotificationCenter.currentNotificationCenter addNotificationRequest:[UNNotificationRequest requestWithIdentifier:identifier content:content trigger:nil] withCompletionHandler:nil];
+            };
+            [self loadAvatar:event[@"avatarURL"] completion:deliver];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,750*NSEC_PER_MSEC),dispatch_get_main_queue(),^{deliver(nil);});
+        });
+    }];
 }
 - (void)notifyTitle:(NSString *)title body:(NSString *)body path:(NSString *)path identifier:(NSString *)identifier thread:(NSString *)thread {
     NSUInteger generation=self.generation;
@@ -81,6 +157,7 @@ static NSString *VRText(id value, NSUInteger limit, NSString *fallback) {
         if(![self.userID isEqual:user]) {
             [self endBackgroundSync]; self.generation++; self.userID=user; self.started=NSDate.date;
             [self.latest removeAllObjects]; [self.seen removeAllObjects]; self.unread=-1;
+            [self.avatars removeAllObjects];[self.avatarWaiters removeAllObjects];
             if(!user.length) { [self updateBadge:0]; [UNUserNotificationCenter.currentNotificationCenter removeAllDeliveredNotifications]; }
         }
         NSMutableDictionary *headers=[NSMutableDictionary dictionaryWithObject:@"application/json" forKey:@"Accept"];
@@ -100,6 +177,13 @@ static NSString *VRText(id value, NSUInteger limit, NSString *fallback) {
         for(id item in event[@"items"]) if([item isKindOfClass:NSDictionary.class]&&VRValidID(item[@"matchId"])&&VRValidID(item[@"messageId"])) {
             self.latest[item[@"matchId"]]=item[@"messageId"]; [self remember:item[@"messageId"]];
         }
+        NSUInteger generation=self.generation;
+        [UNUserNotificationCenter.currentNotificationCenter getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings){
+            if(settings.authorizationStatus!=UNAuthorizationStatusAuthorized&&settings.authorizationStatus!=UNAuthorizationStatusProvisional)return;
+            dispatch_async(dispatch_get_main_queue(),^{if(generation!=self.generation||!self.authenticated)return;
+                NSArray *items=event[@"items"];for(NSDictionary *item in [items subarrayWithRange:NSMakeRange(0,MIN(8,items.count))])if([item isKindOfClass:NSDictionary.class])[self loadAvatar:item[@"avatarURL"] completion:^(NSData *data){}];
+            });
+        }];
     }
 }
 - (void)beginBackgroundSync {
@@ -165,7 +249,9 @@ static NSString *VRText(id value, NSUInteger limit, NSString *fallback) {
                         if([last[@"type"] isEqual:@"voice"])body=@"[语音]";
                         if([last[@"type"] isEqual:@"vrc_link"])body=@"[VRChat 链接]";
                         NSDictionary *peer=[item[@"user"] isKindOfClass:NSDictionary.class]?item[@"user"]:@{};
-                        [self deliver:@{@"messageId":last[@"id"],@"matchId":matchID,@"senderId":last[@"senderId"]?:@"",@"title":VRText(peer[@"displayName"],80,@"新聊天消息"),@"body":body}];
+                        NSDictionary *media=[peer[@"avatar"] isKindOfClass:NSDictionary.class]?peer[@"avatar"]:@{};
+                        NSString *avatar=[media[@"view"] isEqual:@"show"]?VRText(media[@"thumbUrl"],4096,VRText(media[@"url"],4096,@"")):@"";
+                        [self deliver:@{@"messageId":last[@"id"],@"matchId":matchID,@"senderId":last[@"senderId"]?:@"",@"displayId":VRText(peer[@"id"],120,VRText(last[@"senderId"],120,@"")),@"avatarURL":avatar,@"title":VRText(peer[@"displayName"],80,@"新聊天消息"),@"body":body}];
                     } else [self remember:last[@"id"]];
                 }
                 // This response may be paginated: do not replace the account's
@@ -175,4 +261,14 @@ static NSString *VRText(id value, NSUInteger limit, NSString *fallback) {
         }] resume];
     }];
 }
+#if ERP_TESTING
+- (NSDictionary *)verifyNotificationContent {
+    NSDictionary *event=@{@"title":@"测试联系人",@"displayId":@"peer-test-id",@"senderId":@"peer-test-id",@"body":@"测试消息内容"};
+    NSData *avatar=[self initialAvatar:@"測"];
+    UNMutableNotificationContent *content=[self messageContent:event path:@"/matches/thread" thread:@"thread" avatar:avatar];
+    UNNotificationAttachment *attachment=content.attachments.firstObject;
+    UIImage *image=attachment?[UIImage imageWithContentsOfFile:attachment.URL.path]:nil;
+    return @{@"title":content.title,@"subtitle":content.subtitle,@"body":content.body,@"attachmentCount":@(content.attachments.count),@"avatarWidth":@(image.size.width),@"avatarHeight":@(image.size.height),@"thread":content.threadIdentifier,@"path":content.userInfo[@"path"],@"sound":@(content.sound!=nil)};
+}
+#endif
 @end
