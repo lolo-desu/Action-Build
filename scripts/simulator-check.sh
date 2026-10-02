@@ -26,8 +26,19 @@ xcrun simctl boot "$SIM_ID"
 xcrun simctl bootstatus "$SIM_ID" -b
 xcrun simctl install "$SIM_ID" "$APP"
 xcrun simctl launch "$SIM_ID" local.erp.stable --verify-keyboard
-sleep 9
 DATA_PATH="$(xcrun simctl get_app_container "$SIM_ID" local.erp.stable data)"
+wait_for_report() {
+  local report="$1"
+  for attempt in {1..90}; do
+    if test -f "$DATA_PATH/Documents/$report"; then return 0; fi
+    sleep 2
+  done
+  xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/simulator-timeout.png" || true
+  xcrun simctl spawn "$SIM_ID" log show --last 3m --style compact --predicate 'process == "ERPStable"' > "$ROOT/build/simulator-timeout.log" || true
+  echo "Timed out waiting for simulator report: $report" >&2
+  return 1
+}
+wait_for_report layout-reopened.json
 cp "$DATA_PATH/Documents/layout-first.json" "$ROOT/build/layout-first.json"
 cp "$DATA_PATH/Documents/layout-reopened.json" "$ROOT/build/layout-reopened.json"
 xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/web-keyboard.png"
@@ -48,7 +59,7 @@ for phase in ['first','reopened']:
 print('PASS: real simulator keyboard first show, reopen, accessory removal and visible composer')
 PY
 xcrun simctl launch --terminate-running-process "$SIM_ID" local.erp.stable --verify-glass
-sleep 9
+wait_for_report glass-restored.json
 for phase in tabs modal restored; do cp "$DATA_PATH/Documents/glass-$phase.json" "$ROOT/build/glass-$phase.json"; done
 python3 - "$ROOT/build" <<'PY'
 import json,sys

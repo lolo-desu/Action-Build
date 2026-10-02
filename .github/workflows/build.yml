@@ -45,5 +45,7 @@ jobs:
             build/glass-modal.json
             build/glass-restored.json
             build/app-glass.png
+            build/simulator-timeout.png
+            build/simulator-timeout.log
           if-no-files-found: error
           retention-days: 30
