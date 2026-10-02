@@ -110,7 +110,18 @@ struct NotificationsView: View {
             if !cursor.isEmpty { Button("加载更多") { Task { await load(reset: false) } } }
         }
         .navigationTitle("通知")
-        .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("全部已读") { Task { do { _ = try await store.mutate("/notifications/read", body: .object(["all": .bool(true)])); await load(reset: true) } catch { self.error = error.localizedDescription } } } }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("全部已读") {
+                    Task {
+                        do {
+                            _ = try await store.mutate("/notifications/read", body: .object(["all": .bool(true)]))
+                            await load(reset: true)
+                        } catch { self.error = error.localizedDescription }
+                    }
+                }
+            }
+        }
         .task(id: store.eventVersion) { await load(reset: true) }
         .refreshable { await load(reset: true) }
         .sheet(item: $sheet) { WebPage(destination: $0) }
