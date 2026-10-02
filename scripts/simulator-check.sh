@@ -30,6 +30,7 @@ sleep 9
 DATA_PATH="$(xcrun simctl get_app_container "$SIM_ID" local.erp.stable data)"
 cp "$DATA_PATH/Documents/layout-first.json" "$ROOT/build/layout-first.json"
 cp "$DATA_PATH/Documents/layout-reopened.json" "$ROOT/build/layout-reopened.json"
+xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/web-keyboard.png"
 python3 - "$ROOT/build" <<'PY'
 import json,sys
 from pathlib import Path
@@ -46,7 +47,6 @@ for phase in ['first','reopened']:
     assert abs(data['chatHeight']-data['nativeHeight'])<1,data
 print('PASS: real simulator keyboard first show, reopen, accessory removal and visible composer')
 PY
-xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/web-keyboard.png"
 xcrun simctl launch --terminate-running-process "$SIM_ID" local.erp.stable --verify-glass
 sleep 9
 for phase in tabs modal restored; do cp "$DATA_PATH/Documents/glass-$phase.json" "$ROOT/build/glass-$phase.json"; done

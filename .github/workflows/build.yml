@@ -31,6 +31,7 @@ jobs:
       - name: Check WebKit keyboard in iOS Simulator
         run: bash scripts/simulator-check.sh
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: vrcrp-web-unsigned
           path: |

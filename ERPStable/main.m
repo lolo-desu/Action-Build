@@ -44,7 +44,7 @@ static UIView *ERPFocusedView(UIView *view) {
 }
 #endif
 
-@interface BrowserController : UIViewController <WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, UNUserNotificationCenterDelegate, UIGestureRecognizerDelegate>
+@interface BrowserController : UIViewController <WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, UNUserNotificationCenterDelegate, UIGestureRecognizerDelegate, UIScrollViewDelegate>
 @property(nonatomic, strong) WKWebView *web;
 @property(nonatomic) BOOL askedForNotifications;
 @property(nonatomic) UIStatusBarStyle statusBarStyle;
@@ -65,6 +65,7 @@ static UIView *ERPFocusedView(UIView *view) {
 @property(nonatomic) BOOL hasContent;
 @property(nonatomic) BOOL canGoBack;
 @property(nonatomic) BOOL websiteOverlay;
+@property(nonatomic) BOOL chatLayout;
 @property(nonatomic) NSTimeInterval lastHaptic;
 @property(nonatomic) NSUInteger snapshotGeneration;
 @end
@@ -106,6 +107,7 @@ static UIView *ERPFocusedView(UIView *view) {
     self.web.scrollView.pinchGestureRecognizer.enabled = NO;
     self.web.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
     self.web.scrollView.keyboardDismissMode = UIScrollViewKeyboardDismissModeNone;
+    self.web.scrollView.delegate=self;
     self.web.inputAssistantItem.leadingBarButtonGroups = @[];
     self.web.inputAssistantItem.trailingBarButtonGroups = @[];
     self.web.translatesAutoresizingMaskIntoConstraints = NO;
@@ -186,6 +188,16 @@ static UIView *ERPFocusedView(UIView *view) {
         completion:^(BOOL finished) { self.loadingCover.hidden=YES; }];
 }
 - (void)refreshPage:(id)sender { [self haptic:@"light"]; [self.web reload]; }
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+    // The site's chat is a fixed-height flex page with its own message scroller.
+    // WebKit can still auto-scroll the OUTER view after focusing a small editor,
+    // even after we resize it for the keyboard. That second movement must not
+    // offset the whole page; nested message/editor scrolling remains unchanged.
+    if (scrollView==self.web.scrollView && self.chatLayout &&
+        (fabs(scrollView.contentOffset.y)>.5 || fabs(scrollView.contentOffset.x)>.5)) {
+        [scrollView setContentOffset:CGPointZero animated:NO];
+    }
+}
 - (void)retryPage:(id)sender {
     self.retryButton.hidden=YES; self.loadingCaption.text=@"正在连接…"; [self.spinner startAnimating];
     [self.web loadRequest:[NSURLRequest requestWithURL:self.pendingURL?:self.web.URL?:[NSURL URLWithString:@"https://erp.sex/"]]];
@@ -319,6 +331,8 @@ static UIView *ERPFocusedView(UIView *view) {
         else if ([kind isEqualToString:@"route"]) {
             NSString *path=body[@"path"];
             if (![path isKindOfClass:NSString.class] || ![path hasPrefix:@"/"] || path.length>500) return;
+            self.chatLayout=[path rangeOfString:@"^/matches/[^/]+/?$" options:NSRegularExpressionSearch].location!=NSNotFound;
+            if (self.chatLayout) [self.web.scrollView setContentOffset:CGPointZero animated:NO];
             self.canGoBack=[body[@"canGoBack"] isEqual:@YES]; self.edgeBack.enabled=self.canGoBack && !self.keyboardVisible && !self.websiteOverlay;
             if (self.web.alpha<1) {
                 [UIView animateWithDuration:.16 animations:^{ self.web.alpha=1; } completion:^(BOOL finished){ self.backPreview.hidden=YES; }];
