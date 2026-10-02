@@ -127,7 +127,7 @@
   let generation = 0;
   let queued = false;
   let ready = false;
-  let routePending = false;
+  let routePending = false, routeAnnounced = false;
   let lastPath = location.pathname;
   let entries = [location.pathname + location.search];
   let entryKeys = [history.state?.key || 'vr-initial'];
@@ -175,10 +175,10 @@
     }
     attempt();
   }
-  function route() {
+  function announceRoute() {
     post({ kind: 'route', path: location.pathname, entryKey:entryKey(),parentKey:index>0?String(entryKeys[index-1]):null,direction,showTabs: tabPages.has(location.pathname), canGoBack: index > 0 && !roots.has(location.pathname), refreshable: refreshable.has(location.pathname) });
     if (location.pathname === '/matches') window.__vrcrpSyncChats?.();
-    settle(); direction='none';
+    direction='none';
   }
   async function update() {
     queued = false;
@@ -195,8 +195,9 @@
       ready = true; post({ kind: 'ready' });
     }
     if (routePending) {
-      routePending = false; route();
-      lastPath = location.pathname;
+      routePending = false;
+      if (!routeAnnounced) announceRoute();
+      routeAnnounced = false; settle(); lastPath = location.pathname;
     }
     if (location.pathname === '/settings/notifications' && !document.getElementById('vrcrp-system-notifications')) {
       const main = document.getElementById('main');
@@ -312,6 +313,9 @@
       if (method === 'pushState') { entries.splice(index + 1);entryKeys.splice(index+1); entries.push(path);entryKeys.push(history.state?.key || 'vr-'+Math.random().toString(36).slice(2)); index++; }
       else { entries[index] = path;entryKeys[index]=history.state?.key || entryKeys[index]; if (index === 0 && Number.isInteger(history.state?.idx)) baseIndex = history.state.idx; }
       if(changed)pendingRestore=views.get(entryKey()) || pathViews.get(location.pathname) || null;
+      // Tell UIKit the new history key before waiting for a paint frame.
+      // A quick nested gesture must use the latest parent even during layout.
+      announceRoute(); routeAnnounced = true; lastPath = location.pathname;
       routePending = true; schedule();
       return result;
     };
@@ -325,6 +329,7 @@
     index = target >= 0 && target < entries.length && entries[target] === path ? target : Math.max(0, entries.lastIndexOf(path));
     direction=index<oldIndex?'pop':index>oldIndex?'push':'none';
     pendingRestore=views.get(entryKey()) || null;
+    announceRoute(); routeAnnounced = true; lastPath = location.pathname;
     routePending = true; schedule();
   });
   document.addEventListener('click', event => {

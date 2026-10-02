@@ -100,7 +100,7 @@
     if(!key.length)return;
     NSString *oldKey=self.currentKey;VRPageImage *old=[self.images objectForKey:oldKey];
     self.currentKey=key;self.parentKey=parent;self.currentPath=path;
-    if(self.waitingReturn)return;
+    if(self.waitingReturn||[oldKey isEqual:key])return;
     if(self.transitioning)[self complete];
     if(!oldKey.length||[oldKey isEqual:key]||[direction isEqual:@"none"]||[direction isEqual:@"tab"]||UIAccessibilityIsReduceMotionEnabled())return;
     [self layout];NSUInteger generation=++self.generation;CGFloat width=self.web.bounds.size.width;

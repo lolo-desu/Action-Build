@@ -41,6 +41,9 @@ with sync_playwright() as p:
  page.click('.active-tab');page.wait_for_selector('a[href="/matches/thread"]');page.click('a[href="/matches/thread"]')
  page.wait_for_selector('[data-id="old"]');page.wait_for_function("nativeMessages.filter(m=>m.kind==='route').at(-1).direction==='push'")
  page.locator('textarea').fill('未发送草稿');page.evaluate("fixtureOpen('/u/peer')")
+ assert page.evaluate("nativeMessages.filter(m=>m.kind==='route').at(-1).path")=='/u/peer','route announcement waited for a paint frame'
+ routes=page.evaluate("nativeMessages.filter(m=>m.kind==='route')")
+ assert routes[-1]['parentKey']==next(r['entryKey'] for r in reversed(routes[:-1]) if r['path']=='/matches/thread'),'nested parent is not the chat'
  page.wait_for_function("location.pathname==='/u/peer'");page.evaluate('__vrcrpBack()');page.wait_for_selector('textarea');page.wait_for_function("document.querySelector('textarea').value==='未发送草稿'")
  page.evaluate('__vrcrpBack()');page.wait_for_selector('.active-tab')
  # A warm chat must open with an unreachable API and no document/module reload.

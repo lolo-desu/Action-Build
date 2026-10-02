@@ -69,10 +69,14 @@ with sync_playwright() as p:
     # Invalid updates cannot collapse the page.
     page.evaluate("window.__vrcrpSetViewport({width:393,height:0,keyboardVisible:true})")
     assert page.locator(".h-dvh").evaluate("el => Math.round(el.getBoundingClientRect().height)") == 434
+    # Keyboard updates must apply even while paint frames are paused.
+    page.evaluate("window.fixtureRAF=requestAnimationFrame;window.requestAnimationFrame=()=>0;__vrcrpSetViewport({width:393,height:420,keyboardVisible:true})")
+    assert page.locator('.h-dvh').evaluate("e=>e.getBoundingClientRect().height")==420,'native height waited for requestAnimationFrame'
+    page.evaluate("__vrcrpSetViewport({width:393,height:434,keyboardVisible:true});void(window.requestAnimationFrame=fixtureRAF)")
     # Leaving chat restores normal document scrolling for long forms.
     page.evaluate("history.pushState({},'', '/settings'); document.body.appendChild(document.createElement('div'))")
     page.wait_for_function("document.documentElement.dataset.vrcrpChat === 'false'")
     assert page.locator("body").evaluate("el => getComputedStyle(el).overflow") != "hidden"
     assert page.locator('.h-dvh').evaluate("e => e.getBoundingClientRect().height") == 793, "non-chat layout must retain its original height rules"
     browser.close()
-print("PASS: original fonts/layout, first keyboard presentation, hide/reopen, height changes, multiline composer, stale dvh, invalid viewport and unchanged non-chat layout")
+print("PASS: original fonts/layout, first keyboard presentation, hide/reopen, height changes, multiline composer, stale dvh and paused paint frames, invalid viewport and unchanged non-chat layout")

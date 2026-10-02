@@ -46,7 +46,9 @@
   window.__vrcrpSetViewport = value => {
     if (!value || !Number.isFinite(value.height) || value.height <= 0 || !Number.isFinite(value.width) || value.width <= 0) return;
     viewport = { height: value.height, keyboardVisible: value.keyboardVisible === true };
-    schedule();
+    // Native keyboard layout has already happened. Apply its height now even
+    // when WebKit defers paint callbacks during a transition or cold launch.
+    update();
   };
   document.addEventListener('focusin', schedule);
   window.addEventListener('resize', schedule);
