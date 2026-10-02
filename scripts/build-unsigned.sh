@@ -11,12 +11,13 @@ APP="$OUT/Payload/ERPStable.app"
 mkdir -p "$APP"
 xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" \
   -miphoneos-version-min=15.0 -fobjc-arc -O2 \
-  -framework UIKit -framework Foundation -framework WebKit -framework CoreGraphics -framework UserNotifications \
-  -Wl,-no_adhoc_codesign "$ROOT/ERPStable/main.m" -o "$APP/ERPStable"
+  -framework UIKit -framework Foundation -framework WebKit -framework CoreGraphics -framework UserNotifications -framework SafariServices \
+  -Wl,-no_adhoc_codesign "$ROOT/ERPStable/main.m" "$ROOT/ERPStable/GlassNavigation.m" -o "$APP/ERPStable"
 cp "$ROOT/ERPStable/Info.plist" "$APP/Info.plist"
 cp "$ROOT/ERPStable/interaction.js" "$APP/interaction.js"
 cp "$ROOT/ERPStable/notifications.js" "$APP/notifications.js"
 cp "$ROOT/ERPStable/keyboard.js" "$APP/keyboard.js"
+cp "$ROOT/ERPStable/app-experience.js" "$APP/app-experience.js"
 xcrun ibtool --compile "$APP/LaunchScreen.storyboardc" "$ROOT/ERPStable/LaunchScreen.storyboard" \
   --minimum-deployment-target 15.0 --target-device iphone --target-device ipad
 for entry in '120 AppIcon60x60@2x.png' '180 AppIcon60x60@3x.png' '152 AppIcon76x76@2x.png' '167 AppIcon83.5x83.5@2x.png'; do

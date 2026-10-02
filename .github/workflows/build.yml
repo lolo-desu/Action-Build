@@ -40,5 +40,9 @@ jobs:
             build/layout-reopened.json
             build/web-keyboard.png
             build/web-login.png
+            build/glass-tabs.json
+            build/glass-modal.json
+            build/glass-restored.json
+            build/app-glass.png
           if-no-files-found: error
           retention-days: 30

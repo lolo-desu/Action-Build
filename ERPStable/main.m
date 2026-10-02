@@ -2,6 +2,8 @@
 #import <WebKit/WebKit.h>
 #import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
+#import <SafariServices/SafariServices.h>
+#import "GlassNavigation.h"
 
 // Only the focused responder inside this web view is changed. Keep WebKit's
 // existing input, selection, autofill and keyboard implementations intact.
@@ -42,7 +44,7 @@ static UIView *ERPFocusedView(UIView *view) {
 }
 #endif
 
-@interface BrowserController : UIViewController <WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, UNUserNotificationCenterDelegate>
+@interface BrowserController : UIViewController <WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, UNUserNotificationCenterDelegate, UIGestureRecognizerDelegate>
 @property(nonatomic, strong) WKWebView *web;
 @property(nonatomic) BOOL askedForNotifications;
 @property(nonatomic) UIStatusBarStyle statusBarStyle;
@@ -50,17 +52,34 @@ static UIView *ERPFocusedView(UIView *view) {
 @property(nonatomic) BOOL keyboardVisible;
 @property(nonatomic) CGSize lastViewportSize;
 @property(nonatomic) BOOL lastViewportKeyboardVisible;
+@property(nonatomic, strong) GlassNavigation *glassNav;
+@property(nonatomic, strong) UIView *loadingCover;
+@property(nonatomic, strong) UIActivityIndicatorView *spinner;
+@property(nonatomic, strong) UILabel *loadingCaption;
+@property(nonatomic, strong) UIButton *retryButton;
+@property(nonatomic, strong) UIRefreshControl *refreshControl;
+@property(nonatomic, strong) UIScreenEdgePanGestureRecognizer *edgeBack;
+@property(nonatomic, strong) UIImageView *backPreview;
+@property(nonatomic, strong) UIImage *lastSnapshot;
+@property(nonatomic, strong) NSURL *pendingURL;
+@property(nonatomic) BOOL hasContent;
+@property(nonatomic) BOOL canGoBack;
+@property(nonatomic) BOOL websiteOverlay;
+@property(nonatomic) NSTimeInterval lastHaptic;
+@property(nonatomic) NSUInteger snapshotGeneration;
 @end
 
 @implementation BrowserController
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.systemBackgroundColor;
+    self.view.backgroundColor=VRColor([NSUserDefaults.standardUserDefaults objectForKey:@"VRThemeBackground"],UIColor.systemBackgroundColor);
     WKWebViewConfiguration *configuration = [WKWebViewConfiguration new];
     configuration.websiteDataStore = WKWebsiteDataStore.defaultDataStore;
     configuration.ignoresViewportScaleLimits = NO;
     configuration.allowsInlineMediaPlayback = YES;
     [configuration.userContentController addScriptMessageHandler:self name:@"erpNativeNotifications"];
+    [configuration.userContentController addScriptMessageHandler:self name:@"erpNativeApp"];
     NSURL *scriptURL = [NSBundle.mainBundle URLForResource:@"interaction" withExtension:@"js"];
     NSString *script = [NSString stringWithContentsOfURL:scriptURL encoding:NSUTF8StringEncoding error:nil];
     NSAssert(script != nil, @"Missing interaction.js");
@@ -74,6 +93,9 @@ static UIView *ERPFocusedView(UIView *view) {
     NSAssert(keyboardScript != nil, @"Missing keyboard.js");
     [configuration.userContentController addUserScript:[[WKUserScript alloc]
         initWithSource:keyboardScript injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    NSString *appScript=[NSString stringWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"app-experience" withExtension:@"js"] encoding:NSUTF8StringEncoding error:nil];
+    NSAssert(appScript!=nil,@"Missing app-experience.js");
+    [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:appScript injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
     self.web = [[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration];
     self.web.navigationDelegate = self;
     self.web.UIDelegate = self;
@@ -87,6 +109,11 @@ static UIView *ERPFocusedView(UIView *view) {
     self.web.inputAssistantItem.leadingBarButtonGroups = @[];
     self.web.inputAssistantItem.trailingBarButtonGroups = @[];
     self.web.translatesAutoresizingMaskIntoConstraints = NO;
+    self.web.opaque=NO; self.web.backgroundColor=UIColor.clearColor;
+    self.web.scrollView.backgroundColor=self.view.backgroundColor;
+    self.web.scrollView.bounces=NO;
+    self.backPreview=[UIImageView new]; self.backPreview.contentMode=UIViewContentModeScaleToFill;
+    self.backPreview.hidden=YES; [self.view addSubview:self.backPreview];
     [self.view addSubview:self.web];
     self.webBottomConstraint = [self.web.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor];
     [NSLayoutConstraint activateConstraints:@[
@@ -94,6 +121,18 @@ static UIView *ERPFocusedView(UIView *view) {
         self.webBottomConstraint,
         [self.web.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [self.web.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor]]];
+    self.glassNav=[GlassNavigation new]; [self.view addSubview:self.glassNav];
+    __weak BrowserController *weakSelf=self;
+    self.glassNav.onSelect=^(NSInteger slot) {
+        [weakSelf haptic:@"selection"];
+        [weakSelf.web evaluateJavaScript:[NSString stringWithFormat:@"window.__vrcrpActivateTab?.(%ld)",(long)slot] completionHandler:nil];
+    };
+    self.refreshControl=[UIRefreshControl new];
+    [self.refreshControl addTarget:self action:@selector(refreshPage:) forControlEvents:UIControlEventValueChanged];
+    self.edgeBack=[[UIScreenEdgePanGestureRecognizer alloc] initWithTarget:self action:@selector(edgeBack:)];
+    self.edgeBack.edges=UIRectEdgeLeft; self.edgeBack.delegate=self; self.edgeBack.enabled=NO;
+    [self.view addGestureRecognizer:self.edgeBack];
+    [self createLoadingCover];
     ERPPrepareTextInputs(self.web);
     for (NSNotificationName name in @[UIKeyboardWillChangeFrameNotification, UIKeyboardDidChangeFrameNotification, UIKeyboardWillHideNotification]) {
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(keyboardFrameChanged:) name:name object:nil];
@@ -101,14 +140,94 @@ static UIView *ERPFocusedView(UIView *view) {
     UNUserNotificationCenter.currentNotificationCenter.delegate = self;
 #if ERP_TESTING
     NSArray *arguments = NSProcessInfo.processInfo.arguments;
-    if ([arguments containsObject:@"--verify-keyboard"]) {
+    if ([arguments containsObject:@"--verify-keyboard"] || [arguments containsObject:@"--verify-glass"]) {
         NSString *fixture = [NSString stringWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"layout-fixture" withExtension:@"html"] encoding:NSUTF8StringEncoding error:nil];
-        [self.web loadHTMLString:fixture baseURL:[NSURL URLWithString:@"https://erp.sex/matches/layout-fixture"]];
+        NSString *path=[arguments containsObject:@"--verify-glass"]?@"https://erp.sex/discover":@"https://erp.sex/matches/layout-fixture";
+        [self.web loadHTMLString:fixture baseURL:[NSURL URLWithString:path]];
     } else if ([arguments containsObject:@"--preview-login"]) {
         [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://erp.sex/login"]]];
     } else
 #endif
-    [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://erp.sex/"]]];
+    {
+        NSString *lastTab=[NSUserDefaults.standardUserDefaults stringForKey:@"VRLastTab"];
+        NSSet *tabs=[NSSet setWithArray:@[@"/discover",@"/likes",@"/matches",@"/posts",@"/me"]];
+        NSString *path=[tabs containsObject:lastTab]?lastTab:@"/";
+        [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:[@"https://erp.sex" stringByAppendingString:path]]]];
+    }
+}
+- (void)createLoadingCover {
+    self.loadingCover=[UIView new]; self.loadingCover.backgroundColor=self.view.backgroundColor;
+    CGFloat red=1,green=1,blue=1,alpha=1; [self.view.backgroundColor getRed:&red green:&green blue:&blue alpha:&alpha];
+    self.loadingCover.overrideUserInterfaceStyle=(.2126*red+.7152*green+.0722*blue<.5)?UIUserInterfaceStyleDark:UIUserInterfaceStyleLight;
+    self.loadingCover.tintColor=VRColor([NSUserDefaults.standardUserDefaults objectForKey:@"VRThemeAccent"],UIColor.systemRedColor);
+    self.loadingCover.translatesAutoresizingMaskIntoConstraints=NO; [self.view addSubview:self.loadingCover];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.loadingCover.topAnchor constraintEqualToAnchor:self.web.topAnchor], [self.loadingCover.bottomAnchor constraintEqualToAnchor:self.web.bottomAnchor],
+        [self.loadingCover.leadingAnchor constraintEqualToAnchor:self.web.leadingAnchor], [self.loadingCover.trailingAnchor constraintEqualToAnchor:self.web.trailingAnchor]]];
+    UIImageView *icon=[[UIImageView alloc] initWithImage:[UIImage imageNamed:@"AppIcon60x60"]]; icon.contentMode=UIViewContentModeScaleAspectFit;
+    icon.layer.cornerRadius=16; icon.clipsToBounds=YES;
+    [icon.widthAnchor constraintEqualToConstant:64].active=YES; [icon.heightAnchor constraintEqualToConstant:64].active=YES;
+    UILabel *title=[UILabel new]; title.text=@"vrcrp"; title.font=[UIFont systemFontOfSize:20 weight:UIFontWeightSemibold]; title.textAlignment=NSTextAlignmentCenter; title.textColor=UIColor.labelColor;
+    self.loadingCaption=[UILabel new]; self.loadingCaption.text=@"正在连接…"; self.loadingCaption.font=[UIFont systemFontOfSize:14];
+    self.loadingCaption.textAlignment=NSTextAlignmentCenter; self.loadingCaption.textColor=UIColor.secondaryLabelColor; self.loadingCaption.numberOfLines=2;
+    self.spinner=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium]; [self.spinner startAnimating];
+    self.retryButton=[UIButton buttonWithType:UIButtonTypeSystem]; [self.retryButton setTitle:@"重新连接" forState:UIControlStateNormal]; self.retryButton.hidden=YES;
+    [self.retryButton addTarget:self action:@selector(retryPage:) forControlEvents:UIControlEventTouchUpInside];
+    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[icon,title,self.loadingCaption,self.spinner,self.retryButton]];
+    stack.axis=UILayoutConstraintAxisVertical; stack.alignment=UIStackViewAlignmentCenter; stack.spacing=14;
+    stack.translatesAutoresizingMaskIntoConstraints=NO; [self.loadingCover addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[[stack.centerXAnchor constraintEqualToAnchor:self.loadingCover.centerXAnchor],
+        [stack.centerYAnchor constraintEqualToAnchor:self.loadingCover.centerYAnchor], [stack.widthAnchor constraintLessThanOrEqualToAnchor:self.loadingCover.widthAnchor multiplier:.8]]];
+}
+- (void)contentReady {
+    self.hasContent=YES; [self.refreshControl endRefreshing]; [self.spinner stopAnimating];
+    if (self.loadingCover.hidden) return;
+    [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled()?0:.22 animations:^{ self.loadingCover.alpha=0; }
+        completion:^(BOOL finished) { self.loadingCover.hidden=YES; }];
+}
+- (void)refreshPage:(id)sender { [self haptic:@"light"]; [self.web reload]; }
+- (void)retryPage:(id)sender {
+    self.retryButton.hidden=YES; self.loadingCaption.text=@"正在连接…"; [self.spinner startAnimating];
+    [self.web loadRequest:[NSURLRequest requestWithURL:self.pendingURL?:self.web.URL?:[NSURL URLWithString:@"https://erp.sex/"]]];
+}
+- (void)haptic:(NSString *)style {
+    NSTimeInterval now=NSDate.timeIntervalSinceReferenceDate;
+    if (now-self.lastHaptic<.08) return; self.lastHaptic=now;
+    if ([style isEqualToString:@"selection"]) { UISelectionFeedbackGenerator *feedback=[UISelectionFeedbackGenerator new]; [feedback selectionChanged]; }
+    else if ([style isEqualToString:@"success"]) { UINotificationFeedbackGenerator *feedback=[UINotificationFeedbackGenerator new]; [feedback notificationOccurred:UINotificationFeedbackTypeSuccess]; }
+    else if ([style isEqualToString:@"light"]) { UIImpactFeedbackGenerator *feedback=[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight]; [feedback impactOccurred]; }
+}
+- (void)captureSnapshot {
+    NSUInteger generation=++self.snapshotGeneration;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC/3),dispatch_get_main_queue(),^{
+        if (generation!=self.snapshotGeneration || self.keyboardVisible || self.presentedViewController) return;
+        [self.web takeSnapshotWithConfiguration:nil completionHandler:^(UIImage *image,NSError *error) {
+            if (generation==self.snapshotGeneration && image) self.lastSnapshot=image;
+        }];
+    });
+}
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
+    return gesture!=self.edgeBack || (self.canGoBack && !self.keyboardVisible && !self.websiteOverlay && !self.presentedViewController && !self.web.loading);
+}
+- (void)edgeBack:(UIScreenEdgePanGestureRecognizer *)gesture {
+    CGFloat distance=MAX(0,[gesture translationInView:self.view].x), width=self.web.bounds.size.width;
+    if (gesture.state==UIGestureRecognizerStateBegan) {
+        self.backPreview.hidden=self.backPreview.image==nil; [self haptic:@"selection"];
+    }
+    if (gesture.state==UIGestureRecognizerStateChanged) self.web.transform=CGAffineTransformMakeTranslation(MIN(width,distance),0);
+    if (gesture.state==UIGestureRecognizerStateEnded || gesture.state==UIGestureRecognizerStateCancelled) {
+        BOOL commit=gesture.state==UIGestureRecognizerStateEnded && (distance>width*.32 || [gesture velocityInView:self.view].x>550);
+        [UIView animateWithDuration:.2 animations:^{ self.web.transform=commit?CGAffineTransformMakeTranslation(width,0):CGAffineTransformIdentity; }
+            completion:^(BOOL finished) {
+                if (commit) {
+                    self.web.alpha=0; self.web.transform=CGAffineTransformIdentity;
+                    [self.web evaluateJavaScript:@"window.__vrcrpBack?.()" completionHandler:nil];
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC/2),dispatch_get_main_queue(),^{
+                        [UIView animateWithDuration:.16 animations:^{ self.web.alpha=1; } completion:^(BOOL finished){self.backPreview.hidden=YES;}];
+                    });
+                } else self.backPreview.hidden=YES;
+            }];
+    }
 }
 - (BOOL)prefersStatusBarHidden { return NO; }
 - (UIStatusBarStyle)preferredStatusBarStyle { return self.statusBarStyle; }
@@ -124,6 +243,7 @@ static UIView *ERPFocusedView(UIView *view) {
     CGFloat height = docked ? CGRectGetMaxY(self.view.bounds) - CGRectGetMinY(overlap) : 0;
     if ([notification.name isEqualToString:UIKeyboardWillHideNotification]) height = 0;
     self.keyboardVisible = height > 0;
+    self.edgeBack.enabled=self.canGoBack && !self.keyboardVisible && !self.websiteOverlay;
     self.webBottomConstraint.constant = -height;
     NSTimeInterval duration = [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
     UIViewAnimationOptions curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] integerValue] << 16;
@@ -134,6 +254,8 @@ static UIView *ERPFocusedView(UIView *view) {
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     [self syncViewport:NO];
+    [self.glassNav layoutForWebFrame:self.web.frame];
+    self.backPreview.frame=self.web.frame;
 }
 - (void)syncViewport:(BOOL)force {
     CGSize size = self.web.bounds.size;
@@ -151,7 +273,8 @@ static UIView *ERPFocusedView(UIView *view) {
     [super viewDidAppear:animated];
 #if ERP_TESTING
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"] ||
-        [NSProcessInfo.processInfo.arguments containsObject:@"--preview-login"]) return;
+        [NSProcessInfo.processInfo.arguments containsObject:@"--preview-login"] ||
+        [NSProcessInfo.processInfo.arguments containsObject:@"--verify-glass"]) return;
 #endif
     if (self.askedForNotifications || [NSUserDefaults.standardUserDefaults boolForKey:@"ERPNotificationPromptShown"]) return;
     self.askedForNotifications = YES;
@@ -172,6 +295,42 @@ static UIView *ERPFocusedView(UIView *view) {
         ![message.frameInfo.securityOrigin.protocol isEqualToString:@"https"] ||
         ![message.body isKindOfClass:NSDictionary.class]) return;
     NSDictionary *body = message.body;
+    if ([message.name isEqualToString:@"erpNativeApp"]) {
+        NSString *kind=body[@"kind"];
+        if ([kind isEqualToString:@"ready"]) {
+            [self contentReady]; [self captureSnapshot];
+            NSString *script=[NSString stringWithFormat:@"window.__vrcrpAccessibility?.({reduceTransparency:%@,reduceMotion:%@})",UIAccessibilityIsReduceTransparencyEnabled()?@"true":@"false",UIAccessibilityIsReduceMotionEnabled()?@"true":@"false"];
+            [self.web evaluateJavaScript:script completionHandler:nil];
+        } else if ([kind isEqualToString:@"navigation"]) {
+            self.websiteOverlay=![body[@"visible"] isEqual:@YES];
+            self.edgeBack.enabled=self.canGoBack && !self.keyboardVisible && !self.websiteOverlay;
+            self.refreshControl.enabled=!self.websiteOverlay;
+            if ([body[@"items"] isKindOfClass:NSArray.class] && [self.glassNav applyModel:body webFrame:self.web.frame]) {
+                for (NSDictionary *item in body[@"items"]) if ([item[@"selected"] boolValue] && [item[@"color"] isKindOfClass:NSArray.class]) {
+                    [NSUserDefaults.standardUserDefaults setObject:item[@"color"] forKey:@"VRThemeAccent"];
+                    self.loadingCover.tintColor=VRColor(item[@"color"],UIColor.systemRedColor);
+                }
+                [self.web evaluateJavaScript:@"window.__vrcrpNativeNavReady?.()" completionHandler:nil];
+            } else {
+                self.glassNav.hidden=YES;
+                [self.web evaluateJavaScript:@"window.__vrcrpNativeNavFallback?.()" completionHandler:nil];
+            }
+        } else if ([kind isEqualToString:@"haptic"] && [body[@"style"] isKindOfClass:NSString.class]) [self haptic:body[@"style"]];
+        else if ([kind isEqualToString:@"route"]) {
+            NSString *path=body[@"path"];
+            if (![path isKindOfClass:NSString.class] || ![path hasPrefix:@"/"] || path.length>500) return;
+            self.canGoBack=[body[@"canGoBack"] isEqual:@YES]; self.edgeBack.enabled=self.canGoBack && !self.keyboardVisible && !self.websiteOverlay;
+            if (self.web.alpha<1) {
+                [UIView animateWithDuration:.16 animations:^{ self.web.alpha=1; } completion:^(BOOL finished){ self.backPreview.hidden=YES; }];
+            } else self.backPreview.image=self.canGoBack?self.lastSnapshot:nil;
+            BOOL refresh=[body[@"refreshable"] isEqual:@YES];
+            self.web.scrollView.refreshControl=refresh?self.refreshControl:nil;
+            self.web.scrollView.bounces=refresh; self.web.scrollView.alwaysBounceVertical=refresh;
+            if ([[NSSet setWithArray:@[@"/discover",@"/likes",@"/matches",@"/posts",@"/me"]] containsObject:path]) [NSUserDefaults.standardUserDefaults setObject:path forKey:@"VRLastTab"];
+            [self captureSnapshot];
+        }
+        return;
+    }
     if ([body[@"kind"] isEqual:@"appearance"]) {
         NSString *hex = body[@"color"];
         if (![hex isKindOfClass:NSString.class] || hex.length != 7 || ![hex hasPrefix:@"#"]) return;
@@ -182,6 +341,9 @@ static UIView *ERPFocusedView(UIView *view) {
         CGFloat green = ((rgb >> 8) & 255) / 255.0;
         CGFloat blue = (rgb & 255) / 255.0;
         self.view.backgroundColor = [UIColor colorWithRed:red green:green blue:blue alpha:1];
+        self.loadingCover.backgroundColor=self.view.backgroundColor; self.web.scrollView.backgroundColor=self.view.backgroundColor;
+        self.loadingCover.overrideUserInterfaceStyle=(.2126*red+.7152*green+.0722*blue<.5)?UIUserInterfaceStyleDark:UIUserInterfaceStyleLight;
+        [NSUserDefaults.standardUserDefaults setObject:@[@(red),@(green),@(blue),@1] forKey:@"VRThemeBackground"];
         self.statusBarStyle = (0.2126 * red + 0.7152 * green + 0.0722 * blue < 0.55) ? UIStatusBarStyleLightContent : UIStatusBarStyleDarkContent;
         [self setNeedsStatusBarAppearanceUpdate];
         return;
@@ -210,7 +372,7 @@ static UIView *ERPFocusedView(UIView *view) {
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response
     withCompletionHandler:(void (^)(void))completionHandler {
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://erp.sex/matches"]]];
+        [self.web evaluateJavaScript:@"window.__vrcrpOpenMatches ? window.__vrcrpOpenMatches() : location.assign('https://erp.sex/matches')" completionHandler:nil];
     });
     completionHandler();
 }
@@ -218,6 +380,7 @@ static UIView *ERPFocusedView(UIView *view) {
     webView.scrollView.pinchGestureRecognizer.enabled = NO;
     ERPPrepareTextInputs(webView);
     [self syncViewport:YES];
+    [self.refreshControl endRefreshing];
 #if ERP_TESTING
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
@@ -232,6 +395,20 @@ static UIView *ERPFocusedView(UIView *view) {
         });
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 7 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [self captureLayout:@"reopened"]; });
     }
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-glass"]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{
+            [self.glassNav.buttons[3] sendActionsForControlEvents:UIControlEventTouchUpInside];
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC),dispatch_get_main_queue(),^{ [self captureGlass:@"tabs"]; });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,4*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+            [self.web evaluateJavaScript:@"const modal=document.createElement('div');modal.id='test-modal';modal.setAttribute('role','dialog');modal.style='position:fixed;inset:0;z-index:999;background:white';document.body.appendChild(modal)" completionHandler:nil];
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC),dispatch_get_main_queue(),^{ [self captureGlass:@"modal"]; });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,6*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+            [self.web evaluateJavaScript:@"document.getElementById('test-modal').remove()" completionHandler:nil];
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,7*NSEC_PER_SEC),dispatch_get_main_queue(),^{ [self captureGlass:@"restored"]; });
+    }
 #endif
 }
 #if ERP_TESTING
@@ -244,10 +421,30 @@ static UIView *ERPFocusedView(UIView *view) {
         data[@"keyboardHeight"] = @(-self.webBottomConstraint.constant);
         UIView *focused = ERPFocusedView(self.web);
         data[@"accessoryRemoved"] = @(focused && focused.inputAccessoryView == nil);
+        data[@"nativeNavVisible"]=@(!self.glassNav.hidden);
+        data[@"nativeTabCount"]=@(self.glassNav.buttons.count);
+        if (@available(iOS 26.0,*)) data[@"systemGlass"]=@([self.glassNav.material.effect isKindOfClass:UIGlassEffect.class]);
         if (error) data[@"error"] = error.localizedDescription;
         NSURL *directory = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         NSData *json = [NSJSONSerialization dataWithJSONObject:data options:NSJSONWritingPrettyPrinted error:nil];
         [json writeToURL:[directory URLByAppendingPathComponent:[NSString stringWithFormat:@"layout-%@.json", phase]] atomically:YES];
+    }];
+}
+- (void)captureGlass:(NSString *)phase {
+    NSString *script=@"({path:location.pathname,originalClicks:window.__fixtureClicks,webNavOpacity:getComputedStyle(document.querySelector('.app-bottom')).opacity,webCenters:[...document.querySelectorAll('.app-bottom a')].map(a=>{const r=a.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})})";
+    [self.web evaluateJavaScript:script completionHandler:^(id result,NSError *error) {
+        NSMutableDictionary *data=[result isKindOfClass:NSDictionary.class]?[result mutableCopy]:[NSMutableDictionary new];
+        data[@"nativeNavVisible"]=@(!self.glassNav.hidden); data[@"nativeTabCount"]=@(self.glassNav.buttons.count);
+        if (@available(iOS 26.0,*)) data[@"systemGlass"]=@([self.glassNav.material.effect isKindOfClass:UIGlassEffect.class]);
+        NSMutableArray *centers=[NSMutableArray new],*titles=[NSMutableArray new];
+        for (UIButton *button in self.glassNav.buttons) {
+            CGPoint point=[button convertPoint:CGPointMake(button.bounds.size.width/2,button.bounds.size.height/2) toView:self.web];
+            [centers addObject:@[@(point.x),@(point.y)]]; [titles addObject:button.accessibilityLabel?:@""];
+        }
+        data[@"nativeCenters"]=centers; data[@"nativeTitles"]=titles;
+        if (error) data[@"error"]=error.localizedDescription;
+        NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+        [[NSJSONSerialization dataWithJSONObject:data options:NSJSONWritingPrettyPrinted error:nil] writeToURL:[directory URLByAppendingPathComponent:[NSString stringWithFormat:@"glass-%@.json",phase]] atomically:YES];
     }];
 }
 #endif
@@ -257,10 +454,16 @@ static UIView *ERPFocusedView(UIView *view) {
 }
 - (void)showError:(NSError *)error {
     if (error.code == NSURLErrorCancelled) return;
+    [self.refreshControl endRefreshing];
+    if (!self.hasContent) {
+        self.loadingCover.hidden=NO; self.loadingCover.alpha=1; [self.spinner stopAnimating];
+        self.loadingCaption.text=@"暂时无法连接，请检查网络后重试。"; self.retryButton.hidden=NO;
+        return;
+    }
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"页面加载失败"
         message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"重试" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://erp.sex/"]]];
+        [self retryPage:action];
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
     if (!self.presentedViewController) [self presentViewController:alert animated:YES completion:nil];
@@ -268,6 +471,23 @@ static UIView *ERPFocusedView(UIView *view) {
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error { [self showError:error]; }
 - (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error { [self showError:error]; }
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView { [webView reload]; }
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)action decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+    NSURL *url=action.request.URL;
+    BOOL main=action.targetFrame.isMainFrame || !action.targetFrame;
+    BOOL tapped=action.navigationType==WKNavigationTypeLinkActivated;
+    BOOL authentication=[url.path.lowercaseString containsString:@"auth"] || [url.path.lowercaseString containsString:@"login"];
+    for (NSURLQueryItem *item in [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO].queryItems) {
+        if ([[NSSet setWithArray:@[@"client_id",@"redirect_uri",@"code_challenge"]] containsObject:item.name]) authentication=YES;
+    }
+    if (main && tapped && !authentication && ([@"https" isEqualToString:url.scheme] || [@"http" isEqualToString:url.scheme]) && ![url.host isEqualToString:@"erp.sex"] && !self.presentedViewController) {
+        [self presentViewController:[[SFSafariViewController alloc] initWithURL:url] animated:YES completion:nil]; decisionHandler(WKNavigationActionPolicyCancel); return;
+    }
+    if (main && tapped && [[NSSet setWithArray:@[@"mailto",@"tel",@"vrchat",@"vrcx"]] containsObject:url.scheme]) {
+        [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil]; decisionHandler(WKNavigationActionPolicyCancel); return;
+    }
+    if (main) self.pendingURL=url;
+    decisionHandler(WKNavigationActionPolicyAllow);
+}
 - (WKWebView *)webView:(WKWebView *)webView createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
     forNavigationAction:(WKNavigationAction *)action windowFeatures:(WKWindowFeatures *)features {
     if (!action.targetFrame) [webView loadRequest:action.request];
