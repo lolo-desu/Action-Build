@@ -24,11 +24,15 @@ jobs:
           if codesign -dv build/Payload/vrcrp.app 2>/dev/null; then exit 1; fi
           unzip -t build/vrcrp-native-unsigned.ipa
           shasum -a 256 build/vrcrp-native-unsigned.ipa > build/SHA256.txt
+      - name: Launch native preview in iOS Simulator
+        run: bash scripts/simulator-preview.sh
       - uses: actions/upload-artifact@v4
         with:
           name: vrcrp-native-unsigned
           path: |
             build/vrcrp-native-unsigned.ipa
             build/SHA256.txt
+            build/native-explore.png
+            build/native-chat.png
           retention-days: 30
           if-no-files-found: error

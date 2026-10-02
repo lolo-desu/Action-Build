@@ -54,7 +54,7 @@ struct NativeSettingsView: View {
         Form {
             Section("显示") {
                 Picker("内容模式", selection: $binding.mode) { ForEach(ContentMode.allCases) { Text($0.title).tag($0) } }
-                Text("界面跟随 iOS 的明暗外观、字号和系统语言设置。").font(.footnote).foregroundStyle(.secondary)
+                Text("界面跟随 iOS 的明暗外观和字号设置。").font(.footnote).foregroundStyle(.secondary)
             }
             Section {
                 Toggle("聊天通知", isOn: $alerts)

@@ -34,7 +34,7 @@ struct RootView: View {
     @Environment(AppStore.self) private var store
     @State private var selected = 0
     @State private var sheet: WebDestination?
-    @State private var notificationMatch: MatchRoute?
+    @State private var notificationMatch: MatchRoute? = ProcessInfo.processInfo.arguments.contains("--preview-chat") ? MatchRoute(id: "demo-match") : nil
     var body: some View {
         Group {
             switch store.phase {
@@ -80,7 +80,7 @@ struct MediaView: View {
     var height: CGFloat = 180
     var body: some View {
         Group {
-            if media["view"].string == "hide" || media["view"].string == "blur" {
+            if media["view"].present && media["view"].string != "show" {
                 Image(systemName: "eye.slash").font(.largeTitle).foregroundStyle(.secondary)
             } else if let url = URL(string: media["thumbUrl"].string.isEmpty ? media["url"].string : media["thumbUrl"].string), ["https"].contains(url.scheme) {
                 AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { ProgressView() }

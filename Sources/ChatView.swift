@@ -58,6 +58,7 @@ struct ChatView: View {
     @State private var sending = false
     @State private var pendingSendID: String?
     @State private var pendingSendText = ""
+    @State private var pendingSendType = ""
     @State private var hasMore = false
     @State private var error = ""
     @State private var translated: [String: String] = [:]
@@ -182,7 +183,8 @@ struct ChatView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         if type == "text" && (text.isEmpty || text.count > 2000) { return }
         sending = true; defer { sending = false }
-        if type == "text", pendingSendText != text { pendingSendID = nil }
+        if pendingSendType != type || (type == "text" && pendingSendText != text) { pendingSendID = nil }
+        pendingSendType = type
         if pendingSendID == nil { pendingSendID = UUID().uuidString }
         pendingSendText = text
         var body: [String: JSON] = ["clientId": .string(pendingSendID!), "type": .string(type)]
