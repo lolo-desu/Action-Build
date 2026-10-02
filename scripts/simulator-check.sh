@@ -9,9 +9,10 @@ cp -R "$ROOT/build/Payload/ERPStable.app" "$APP"
 xcrun --sdk iphonesimulator clang -arch "$ARCH" -isysroot "$SDK" \
   -mios-simulator-version-min=15.0 -fobjc-arc -O2 -DERP_TESTING=1 \
   -framework UIKit -framework Foundation -framework WebKit -framework CoreGraphics -framework UserNotifications -framework SafariServices -framework ImageIO \
-  "$ROOT/ERPStable/main.m" "$ROOT/ERPStable/ThemeNavigation.m" "$ROOT/ERPStable/ChatNotifications.m" "$ROOT/ERPStable/PageNavigation.m" -o "$APP/ERPStable"
+  "$ROOT/ERPStable/main.m" "$ROOT/ERPStable/ThemeNavigation.m" "$ROOT/ERPStable/ChatNotifications.m" "$ROOT/ERPStable/PageNavigation.m" "$ROOT/ERPStable/ExternalBrowser.m" -o "$APP/ERPStable"
 cp "$ROOT/scripts/layout-fixture.html" "$APP/layout-fixture.html"
 cp "$ROOT/scripts/navigation-fixture.html" "$APP/navigation-fixture.html"
+cp "$ROOT/scripts/surface-fixture.html" "$APP/surface-fixture.html"
 python3 - "$APP/Info.plist" <<'PY'
 import plistlib,sys
 from pathlib import Path
@@ -150,6 +151,40 @@ assert restored['path']=='/matches' and restored['index']==0 and restored['nativ
 print('PASS: UIKit nested page previews, finger tracking, reverse-velocity cancellation, draft retention, committed parent return and no document reload')
 PYMOTION
 xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/app-motion.png"
+xcrun simctl launch --terminate-running-process "$SIM_ID" local.erp.stable --verify-surfaces
+wait_for_report surfaces-completed.json
+cp "$DATA_PATH/Documents/"surfaces-*.json "$ROOT/build/"
+cp "$DATA_PATH/Documents/"surfaces-*.png "$ROOT/build/"
+python3 - "$ROOT/build" <<'PYSURFACES'
+import json,sys
+from pathlib import Path
+names=['edit-entry','edit-keyboard','edit-tabs','edit-return','chat','profile','profile-return','pull','refreshed','overlay-preview','overlay-cancelled','overlay-return','external-a','external-b','external-back','external-forward','dark-pull','light-pull','completed']
+stages={s:json.loads((Path(sys.argv[1])/f'surfaces-{s}.json').read_text()) for s in names}
+for stage,data in stages.items():
+ print(stage,data)
+ assert 'error' not in data and data['documentLoads']==1,data
+entry,tabs=stages['edit-entry'],stages['edit-tabs']
+assert entry['backButton'] and entry['edgeBackAllowed'] and tabs['index']==entry['index'] and tabs['historyLength']==entry['historyLength'],stages
+assert stages['edit-keyboard']['keyboard'] and stages['edit-keyboard']['backEnabled'],stages['edit-keyboard']
+assert stages['edit-return']['path']=='/me' and stages['edit-return']['index']==0,stages['edit-return']
+assert stages['chat']['globalHeaderHidden'] and stages['chat']['chatHeaderTop']==0 and stages['chat']['unread']=='7',stages['chat']
+assert stages['profile']['edgeBackAllowed'] and stages['profile']['backButton'] and stages['profile-return']['path']=='/matches/thread',stages
+pull=stages['pull'];assert pull['hintVisible'] and pull['hintText']=='松开刷新' and pull['hintTop']>=pull['headerHeight'] and not pull['bounce'] and pull['surfaceColor']==[1,1,1,1],pull
+assert stages['refreshed']['refreshes']>=1 and not stages['refreshed']['hintVisible'],stages['refreshed']
+assert stages['overlay-preview']['interactive'] and stages['overlay-preview']['overlay'] and stages['overlay-preview']['translation']>0,stages['overlay-preview']
+assert stages['overlay-cancelled']['overlay'] and not stages['overlay-cancelled']['transitioning'] and stages['overlay-cancelled']['translation']==0,stages['overlay-cancelled']
+assert not stages['overlay-return']['overlay'] and stages['overlay-return']['path']=='/discover',stages['overlay-return']
+for phase in ['external-a','external-b','external-back','external-forward']:
+ external=stages[phase]['external'];assert external['host']=='localhost' and external['close'] and external['statusVisible'] and external['webTop']==external['barBottom'],external
+assert not stages['external-a']['external']['back'] and not stages['external-a']['external']['forward'],stages['external-a']
+assert stages['external-b']['external']['back'] and stages['external-b']['external']['url'].endswith('/external/b'),stages['external-b']
+assert stages['external-back']['external']['forward'] and stages['external-back']['external']['url'].endswith('/external/a'),stages['external-back']
+assert stages['external-forward']['external']['url'].endswith('/external/b'),stages['external-forward']
+for phase,expected in [('dark-pull',[24/255,28/255,35/255,1]),('light-pull',[1,1,1,1])]:
+ data=stages[phase];assert data['hintVisible'] and not data['bounce'] and data['hintTop']>=data['headerHeight'] and max(abs(a-b) for a,b in zip(data['surfaceColor'],expected))<1/255,data
+assert 'external' not in stages['completed'] and stages['completed']['path']=='/discover',stages['completed']
+print('PASS: real iOS external URL/header/back/forward/close; profile editing keyboard/back and sibling history; peer chat toolbar/badge; refresh surface and position; overlay preview/cancel/return')
+PYSURFACES
 xcrun simctl launch --terminate-running-process "$SIM_ID" local.erp.stable --preview-login
 sleep 12
 xcrun simctl io "$SIM_ID" screenshot "$ROOT/build/web-login.png"

@@ -8,8 +8,12 @@ class Handler(BaseHTTPRequestHandler):
         url=urlparse(self.path)
         if url.path=='/health':
             body=b'ok'
+        elif url.path.startswith('/external/'):
+            name='A' if url.path.endswith('/a') else 'B'
+            body=(f'<html><head><title>External {name}</title></head><body><h1>External {name}</h1><a href="/external/b">Next page</a></body></html>').encode()
         else:
             fixture='layout-fixture.html' if parse_qs(url.query).get('fixture')==['layout'] else 'navigation-fixture.html'
+            if parse_qs(url.query).get('fixture')==['surfaces'] or url.path in ['/me','/profile/edit/basics','/profile/edit/about','/profile/edit/photos']:fixture='surface-fixture.html'
             body=Path(__file__).with_name(fixture).read_bytes()
         self.send_response(200)
         self.send_header('Content-Type','text/html; charset=utf-8')

@@ -238,7 +238,7 @@
     refreshPage() {
       const c=client();if(!c)return false;
       for(const [key,b] of bodies)if(b.d.page)bodies.delete(key);
-      c.invalidateQueries({refetchType:'active'}).catch(()=>{});return true;
+      return c.invalidateQueries({refetchType:'active'}).then(()=>true,()=>true);
     },
     states() { const c = client(); return c ? [...new Set(scopes(c).filter(q => q.getObserversCount() > 0 && q.queryKey[3] === 'matches' && q.queryKey.length === 5).map(q => q.queryKey[4]))].filter(s => s === 'active' || s === 'unmatched') : ['active']; },
     async refreshChat() {

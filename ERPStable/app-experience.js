@@ -37,6 +37,11 @@
   }
   let surfaceFingerprint = '';
   function updateTopSurface() {
+    const header=document.querySelector('[data-vrcrp-chat-bar]')||document.querySelector('.app-top');
+    if(header&&!document.querySelector('[data-vrcrp-profile-overlay],[role="dialog"],dialog[open]')) {
+      const color=rgba(getComputedStyle(header).backgroundColor);
+      if(color[3]>.99){const fp=JSON.stringify(color);if(fp!==surfaceFingerprint){surfaceFingerprint=fp;post({kind:'topSurface',color});}return;}
+    }
     // Read painted CSS surfaces, never pixels from profile/chat media. A modal
     // or full-screen preview can cover the regular header without changing URL.
     const width = document.documentElement.clientWidth || innerWidth;
@@ -106,7 +111,7 @@
   const zoneObserver=new ResizeObserver(scheduleGestureZones);
   function scheduleGestureZones(){if(!zoneFrame){zoneFrame=true;requestAnimationFrame(()=>{zoneFrame=false;updateGestureZones();});}}
   function updateGestureZones() {
-    const main=document.getElementById('main');
+    const main=document.querySelector('[data-vrcrp-profile-overlay]')||document.getElementById('main');
     if(main!==observedMain){zoneObserver.disconnect();observedMain=main;if(main)zoneObserver.observe(main);}
     if(!main){if(zonesFingerprint!=='[]'){zonesFingerprint='[]';post({kind:'gestureZones',zones:[]});}return;}
     const elements=new Set(main.querySelectorAll('.stage,.cursor-grab,.overflow-x-auto,.overflow-x-scroll,.snap-x,[role="slider"],[role="scrollbar"],[draggable="true"],input,textarea,[contenteditable="true"],button,[role="button"],video,canvas'));
@@ -322,7 +327,8 @@
     }
     return false;
   };
-  window.__vrcrpBack = () => { if (index > 0 && !roots.has(location.pathname)) { saveView(); history.back();return true; } return false; };
+  window.__vrcrpBack = () => { if (index > 0 && !roots.has(location.pathname)) { saveView(); document.activeElement?.blur?.();history.back();return true; } return false; };
+  window.__vrcrpOpenRoot = path => { const a=document.querySelector(`.app-bottom a[href="${path}"]`);if(a)a.click();else location.assign(path); };
   window.__vrcrpClearNavigation = () => { views.clear();pathViews.clear(); pendingRestore=null; };
   window.__vrcrpOpenMatches = () => {
     const link = document.querySelector('.app-bottom a[href="/matches"]');
@@ -338,20 +344,24 @@
     history.pushState(state, '', path);
     window.dispatchEvent(new PopStateEvent('popstate', { state }));
   };
+  const replaceEntry=history.replaceState.bind(history);
+  const editorPath=path=>/^\/profile\/edit(?:\/|$)/.test(path);
   for (const method of ['pushState', 'replaceState']) {
     const original = history[method];
     history[method] = function (...args) {
       let nextPath;try{nextPath=new URL(args[2] || location.href,location.href).pathname;}catch{nextPath=location.pathname;}
       const changed=nextPath!==location.pathname;
+      const sibling=changed&&editorPath(nextPath)&&editorPath(location.pathname);
       if(changed) {
-        direction=roots.has(nextPath)?(roots.has(location.pathname)?'tab':'pop'):'push';
+        direction=sibling?'tab':roots.has(nextPath)?(roots.has(location.pathname)?'tab':'pop'):'push';
         willNavigate(nextPath,direction);
       }
-      const result = Reflect.apply(original, this, args);
+      if(sibling&&args[0]&&typeof args[0]==='object')args[0]={...args[0],idx:history.state?.idx??baseIndex+index};
+      const result = sibling?replaceEntry(...args):Reflect.apply(original, this, args);
       const path = location.pathname + location.search;
-      if (method === 'pushState') { entries.splice(index + 1);entryKeys.splice(index+1); entries.push(path);entryKeys.push(history.state?.key || 'vr-'+Math.random().toString(36).slice(2)); index++; }
+      if (method === 'pushState'&&!sibling) { entries.splice(index + 1);entryKeys.splice(index+1); entries.push(path);entryKeys.push(history.state?.key || 'vr-'+Math.random().toString(36).slice(2)); index++; }
       else { entries[index] = path;entryKeys[index]=history.state?.key || entryKeys[index]; if (index === 0 && Number.isInteger(history.state?.idx)) baseIndex = history.state.idx; }
-      if(changed)pendingRestore=views.get(entryKey()) || pathViews.get(location.pathname) || null;
+      if(changed)pendingRestore=sibling?null:views.get(entryKey()) || pathViews.get(location.pathname) || null;
       // Tell UIKit the new history key before waiting for a paint frame.
       // A quick nested gesture must use the latest parent even during layout.
       announceRoute(); routeAnnounced = true; lastPath = location.pathname;

@@ -50,6 +50,8 @@ jobs:
             build/ux-*.json
             build/app-ux.png
             build/motion-*.json
+            build/surfaces-*.json
+            build/surfaces-*.png
             build/app-motion.png
             build/simulator-timeout.png
             build/simulator-timeout.log

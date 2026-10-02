@@ -6,6 +6,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) BOOL transitioning;
 @property(nonatomic, readonly) BOOL interactive;
 @property(nonatomic, readonly) BOOL canPreviewParent;
+@property(nonatomic, readonly) BOOL canPreviewOverlay;
 @property(nonatomic, copy, readonly) NSString *currentKey;
 @property(nonatomic, copy, readonly, nullable) NSString *previewKey;
 @property(nonatomic, readonly) CGFloat progress;
@@ -16,8 +17,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)moveToKey:(NSString *)key parent:(nullable NSString *)parent path:(NSString *)path direction:(NSString *)direction;
 - (void)settled:(NSString *)key;
 - (void)capture;
+- (void)cancelCapture;
 - (void)layout;
 - (BOOL)beginInteractive;
+- (BOOL)beginOverlayInteractive;
 - (void)updateInteractive:(CGFloat)distance;
 - (void)finishInteractive:(CGFloat)distance velocity:(CGFloat)velocity cancelled:(BOOL)cancelled;
 - (void)abortReturn;

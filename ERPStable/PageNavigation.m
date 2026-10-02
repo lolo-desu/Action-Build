@@ -54,6 +54,8 @@
     self.web.layer.shadowPath=[UIBezierPath bezierPathWithRect:self.web.bounds].CGPath;
 }
 - (BOOL)canPreviewParent { return self.parentKey.length && [self.images objectForKey:self.parentKey]!=nil; }
+- (BOOL)canPreviewOverlay { return [self.images objectForKey:self.currentKey]!=nil; }
+- (void)cancelCapture { self.captureGeneration++; }
 - (void)capture {
     if(!self.currentKey.length||self.transitioning||self.web.alpha<.99)return;
     NSString *key=self.currentKey,*path=self.currentPath;NSUInteger generation=++self.captureGeneration;
@@ -132,9 +134,13 @@
     if(self.transitioning&&!self.interactive&&self.animationDone)[self complete];
 }
 - (BOOL)beginInteractive {
-    if(self.transitioning||!self.canPreviewParent)return NO;
-    VRPageImage *target=[self.images objectForKey:self.parentKey];[self layout];self.generation++;
-    self.underlay.image=target.image;self.underlay.hidden=NO;self.previewKey=self.parentKey;
+    return [self beginInteractiveKey:self.parentKey];
+}
+- (BOOL)beginOverlayInteractive { return [self beginInteractiveKey:self.currentKey]; }
+- (BOOL)beginInteractiveKey:(NSString *)key {
+    VRPageImage *target=[self.images objectForKey:key];if(self.transitioning||!target)return NO;
+    [self layout];self.generation++;
+    self.underlay.image=target.image;self.underlay.hidden=NO;self.previewKey=key;
     self.fromHeader=self.header.backgroundColor;self.toHeader=target.header;
     self.interactive=YES;self.waitingReturn=NO;self.animationDone=NO;self.routeReady=NO;self.progress=0;
     [self shadow:YES];[self setRunning:YES];[self updateInteractive:0];return YES;

@@ -38,7 +38,7 @@
     const count = value?.unreadMessages;
     if (!Number.isSafeInteger(count) || count < 0 || count > 100000) return;
     const increased = unread !== null && count > unread;
-    unread = count; post({ kind: 'counters', unread: count });
+    unread = count;window.__vrcrpChatUnread?.(count);post({ kind: 'counters', unread: count });
     window.__vrcrpSiteCache?.commitCounters(value);
     if (increased && Date.now() - lastDetailed > 3000) {
       clearTimeout(fallbackTimer);
@@ -50,7 +50,7 @@
     if (id === userId) { if (id) postSession(); return; }
     if (userId) socket = null;
     epoch++; controller?.abort();
-    userId = validId(id) ? id : ''; unread = null; seen.clear(); matches.clear(); sessionStarted = Date.now();
+    userId = validId(id) ? id : ''; unread = null; window.__vrcrpChatUnread?.(0); seen.clear(); matches.clear(); sessionStarted = Date.now();
     clearTimeout(fallbackTimer); clearTimeout(pollTimer);
     postSession(); if (userId) schedule(0);
   }
