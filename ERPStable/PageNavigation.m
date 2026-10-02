@@ -115,22 +115,32 @@
     NSUInteger owner=self.generation;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
         if(owner!=self.generation||!self.handoff||self.waitingReturn)return;
-        self.routeReady=YES;[self revealPaintedPage];
+        // Neither a lost paint acknowledgement nor a stalled WebKit snapshot
+        // may leave a frozen profile screenshot on top of a live scroller.
+        [self finishHandoffWithImage:nil owner:owner key:self.currentKey cover:cover];
     });
     [self revealPaintedPage];
+}
+- (void)finishHandoffWithImage:(UIImage *)image owner:(NSUInteger)owner key:(NSString *)key cover:(UIImageView *)cover {
+    if(owner!=self.generation||![key isEqual:self.currentKey]||cover!=self.handoffView||!self.handoff)return;
+    if(image)cover.image=image;
+    // Invalidate all competing snapshot/deadline callbacks before fading.
+    NSUInteger fadeOwner=++self.generation;
+    [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled()?0:.08 delay:0 options:UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionBeginFromCurrentState animations:^{cover.alpha=0;}
+      completion:^(BOOL finished){if(fadeOwner==self.generation)[self complete];}];
 }
 - (void)revealPaintedPage {
     if(!self.handoff||self.waitingReturn||self.interactive||!self.routeReady||self.paintRequested)return;
     self.paintRequested=YES;NSUInteger owner=self.generation;NSString *key=self.currentKey;UIImageView *cover=self.handoffView;
     WKSnapshotConfiguration *config=[WKSnapshotConfiguration new];config.afterScreenUpdates=YES;
     [self.web takeSnapshotWithConfiguration:config completionHandler:^(UIImage *image,NSError *error){
-        if(owner!=self.generation||![key isEqual:self.currentKey]||cover!=self.handoffView)return;
         // The snapshot is a WebKit rendering barrier, not a cached route signal.
         // Keep a single parent surface throughout the handoff, then reveal live UI.
-        if(image)cover.image=image;
-        [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled()?0:.08 delay:0 options:UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionBeginFromCurrentState animations:^{cover.alpha=0;}
-          completion:^(BOOL finished){if(owner==self.generation)[self complete];}];
+        [self finishHandoffWithImage:image owner:owner key:key cover:cover];
     }];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,450*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+        [self finishHandoffWithImage:nil owner:owner key:key cover:cover];
+    });
 }
 - (void)moveToKey:(NSString *)key parent:(NSString *)parent path:(NSString *)path direction:(NSString *)direction {
     if(!key.length)return;

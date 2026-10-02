@@ -17,6 +17,7 @@
     html[data-vrcrp-detail="true"] #main { padding-bottom: calc(16px + env(safe-area-inset-bottom)) !important; }
     html[data-vrcrp-chat="true"] #main { padding-bottom: calc(6px + env(safe-area-inset-bottom)) !important; }
     html[data-vrcrp-explore-grid="true"] .app-bottom a[href="/discover"] { color: rgb(var(--primary)) !important; font-weight: 600 !important; }
+    html[data-vrcrp-app="true"] [data-vrcrp-passive-touch="true"] { touch-action: manipulation !important; }
     [data-vrcrp-swipe-group="true"] { max-width: min(100%, var(--vrcrp-swipe-width)) !important; }
     [data-vrcrp-swipe-actions="true"] > * { flex-shrink: 0 !important; }
   `;
@@ -111,10 +112,13 @@
   const zoneObserver=new ResizeObserver(scheduleGestureZones);
   function scheduleGestureZones(){if(!zoneFrame){zoneFrame=true;requestAnimationFrame(()=>{zoneFrame=false;updateGestureZones();});}}
   function updateGestureZones() {
+    updateSelection();
     const main=document.querySelector('[data-vrcrp-profile-overlay]')||document.getElementById('main');
     if(main!==observedMain){zoneObserver.disconnect();observedMain=main;if(main)zoneObserver.observe(main);}
     if(!main){if(zonesFingerprint!=='[]'){zonesFingerprint='[]';post({kind:'gestureZones',zones:[]});}return;}
-    const elements=new Set(main.querySelectorAll('.stage,.cursor-grab,.overflow-x-auto,.overflow-x-scroll,.snap-x,[role="slider"],[role="scrollbar"],[draggable="true"],input,textarea,[contenteditable="true"],button,[role="button"],video,canvas'));
+    // Clickable photos and ordinary buttons do not own a horizontal gesture.
+    // A protected zone must actually scroll/drag horizontally, or edit text.
+    const elements=new Set(main.querySelectorAll('.stage,.cursor-grab,.snap-x,[role="slider"],[role="scrollbar"],input,textarea,select,[contenteditable]:not([contenteditable="false"]),video[controls]'));
     const visible=new Set();
     for(let x=0;x<5;x++)for(let y=0;y<9;y++){
       let el=document.elementFromPoint((x+.5)*innerWidth/5,(y+.5)*innerHeight/9);
@@ -122,7 +126,24 @@
     }
     for(const el of visible){
       const style=getComputedStyle(el);
-      if((['auto','scroll'].includes(style.overflowX)&&el.scrollWidth>el.clientWidth+4)||style.touchAction==='pan-y'||style.touchAction==='none')elements.add(el);
+      const horizontal=['auto','scroll'].includes(style.overflowX)&&el.scrollWidth>el.clientWidth+4;
+      const key=Object.keys(el).find(k=>k.startsWith('__reactProps$'));
+      const props=key&&el[key];
+      const fiberKey=Object.keys(el).find(k=>k.startsWith('__reactFiber$'));
+      let fiber=fiberKey&&el[fiberKey],framerDrag=false;
+      for(let i=0;fiber&&i<18;i++,fiber=fiber.return){
+        const p=fiber.memoizedProps;
+        if((p?.drag===true||p?.drag==='x')&&p.dragListener!==false){framerDrag=true;break;}
+        if(fiber!==el[fiberKey]&&typeof fiber.type==='string')break;
+      }
+      // Framer drag and actual pointer/touch handlers still retain their area;
+      // touch-action alone (often applied to ordinary media) is insufficient.
+      const customDrag=framerDrag||(style.touchAction==='pan-y'||style.touchAction==='none')&&
+        (el.draggable===true&&!el.matches('img,a')||typeof props?.onPointerMove==='function'||typeof props?.onTouchMove==='function');
+      if(horizontal||customDrag)elements.add(el);
+      const ownsGesture=horizontal||customDrag||el.matches('.stage,.cursor-grab,.snap-x,[role="slider"],[role="scrollbar"],input,textarea,select,video,canvas,[contenteditable]:not([contenteditable="false"])');
+      if(ownsGesture){if(el.hasAttribute('data-vrcrp-passive-touch'))el.removeAttribute('data-vrcrp-passive-touch');}
+      else if(style.touchAction==='none'&&!el.hasAttribute('data-vrcrp-passive-touch'))el.dataset.vrcrpPassiveTouch='true';
     }
     const zones=[];
     for(const el of elements){
@@ -144,7 +165,19 @@
   }
   document.addEventListener('scroll',scheduleGestureZones,{capture:true,passive:true});
   document.addEventListener('pointerdown',updateGestureZones,{capture:true,passive:true});
-  document.addEventListener('selectionchange',()=>post({kind:'selection',entryKey:entryKey(),selected:!getSelection()?.isCollapsed}));
+  let selectionFingerprint='';
+  function updateSelection(){
+    const selection=getSelection(),zones=[];
+    if(selection&&!selection.isCollapsed&&selection.toString().trim())for(let i=0;i<selection.rangeCount;i++){
+      const range=selection.getRangeAt(i);if(!range.commonAncestorContainer.isConnected)continue;
+      for(const r of range.getClientRects())if(r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight)
+        zones.push({x:Math.max(0,r.left-12),y:Math.max(0,r.top-12),width:r.width+24,height:r.height+24});
+    }
+    const value={kind:'selection',entryKey:entryKey(),selected:zones.length>0,zones:zones.slice(0,100)},fp=JSON.stringify(value);
+    if(fp!==selectionFingerprint){selectionFingerprint=fp;post(value);}
+  }
+  document.addEventListener('selectionchange',updateSelection);
+  document.addEventListener('pointerdown',updateSelection,{capture:true,passive:true});
   const icons = new Map();
   function rasterIcon(svg, color) {
     let source = svg.outerHTML.replace(/currentColor/g, color);

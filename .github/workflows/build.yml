@@ -1,14 +1,14 @@
 name: Build vrcrp website iOS IPA
 on:
   push:
-    branches: [vrcrp-web-ios]
+    branches: [main, vrcrp-web-ios]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   build:
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Check notification previews and live refresh
@@ -30,6 +30,8 @@ jobs:
           shasum -a 256 build/ERPStable-unsigned.ipa > build/SHA256.txt
       - name: Check keyboard, navigation, card spacing and status bar in iOS Simulator
         run: bash scripts/simulator-check.sh
+      - name: Check real profile touch gestures and stalled screenshot recovery
+        run: bash scripts/simulator-touch-check.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -59,5 +61,33 @@ jobs:
             build/app-motion.png
             build/simulator-timeout.png
             build/simulator-timeout.log
+            build/touch-tests.log
+            build/touch-results.xcresult
           if-no-files-found: error
           retention-days: 30
+  release:
+    if: github.repository != 'lolo-desu/Action-Build' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: vrcrp-web-unsigned
+          path: release-build
+      - name: Publish verified unsigned IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(python3 -c "import plistlib; print(plistlib.load(open('ERPStable/Info.plist','rb'))['CFBundleShortVersionString'])")
+          cp release-build/ERPStable-unsigned.ipa "vrcrp-v${VERSION}-unsigned.ipa"
+          sha256sum "vrcrp-v${VERSION}-unsigned.ipa" > SHA256.txt
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "Version v${VERSION} already published; increment the version before publishing again."
+            exit 1
+          fi
+          gh release create "v${VERSION}" --target "$GITHUB_SHA" --title "vrcrp ${VERSION}" \
+            --notes-file RELEASE_NOTES.md --draft "vrcrp-v${VERSION}-unsigned.ipa" SHA256.txt
+          gh release edit "v${VERSION}" --draft=false

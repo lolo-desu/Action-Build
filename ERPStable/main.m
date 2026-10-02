@@ -2,20 +2,52 @@
 #import <WebKit/WebKit.h>
 #import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
+#import <UIKit/UIGestureRecognizerSubclass.h>
+#import <math.h>
 #import <SafariServices/SafariServices.h>
 #import "ThemeNavigation.h"
 #import "ChatNotifications.h"
 #import "PageNavigation.h"
 #import "ExternalBrowser.h"
 
+// Resolve direction before WebKit's nested scrollers wait for a history pan.
+// A vertical/leftward move must fail immediately, including slow drags.
+@interface VRBackPanGestureRecognizer : UIPanGestureRecognizer
+@property(nonatomic) CGPoint firstPoint;
+@end
+@implementation VRBackPanGestureRecognizer
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    self.firstPoint=[touches.anyObject locationInView:self.view];
+    [super touchesBegan:touches withEvent:event];
+}
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if(self.state==UIGestureRecognizerStatePossible){
+        CGPoint point=[touches.anyObject locationInView:self.view];CGFloat dx=point.x-self.firstPoint.x,dy=point.y-self.firstPoint.y;
+        if(hypot(dx,dy)>=4&&(dx<=0||fabs(dy)>=dx/1.15)){self.state=UIGestureRecognizerStateFailed;return;}
+    }
+    [super touchesMoved:touches withEvent:event];
+}
+@end
+
 static BOOL ERPUsesSimulatorFixtures(void) {
 #if ERP_TESTING
     NSArray *args=NSProcessInfo.processInfo.arguments;
-    return [args containsObject:@"--verify-keyboard"] || [args containsObject:@"--verify-tabs"] || [args containsObject:@"--verify-ux"] || [args containsObject:@"--verify-motion"] || [args containsObject:@"--verify-surfaces"] || [args containsObject:@"--verify-navigation"] || [args containsObject:@"--verify-handoff"];
+    return [args containsObject:@"--verify-keyboard"] || [args containsObject:@"--verify-tabs"] || [args containsObject:@"--verify-ux"] || [args containsObject:@"--verify-motion"] || [args containsObject:@"--verify-surfaces"] || [args containsObject:@"--verify-navigation"] || [args containsObject:@"--verify-handoff"] || [args containsObject:@"--verify-gestures"];
 #else
     return NO;
 #endif
 }
+
+#if ERP_TESTING
+@interface ERPVerificationWebView : WKWebView
+@property(nonatomic) BOOL stallSnapshot;
+@end
+@implementation ERPVerificationWebView
+- (void)takeSnapshotWithConfiguration:(WKSnapshotConfiguration *)configuration completionHandler:(void (^)(UIImage *,NSError *))completionHandler {
+    if(!self.stallSnapshot)[super takeSnapshotWithConfiguration:configuration completionHandler:completionHandler];
+}
+@end
+#endif
 static NSString *ERPInjectedScript(NSString *script) {
 #if ERP_TESTING
     if(ERPUsesSimulatorFixtures())return [script stringByReplacingOccurrencesOfString:@"https://erp.sex" withString:@"http://127.0.0.1:18765"];
@@ -92,6 +124,7 @@ static UIView *ERPFocusedView(UIView *view) {
 @property(nonatomic) BOOL editingProfile;
 @property(nonatomic) BOOL viewingProfile;
 @property(nonatomic, strong) NSArray *horizontalZones;
+@property(nonatomic, strong) NSArray *selectionZones;
 @property(nonatomic) BOOL textSelected;
 @property(nonatomic, strong) PageNavigation *pageNavigation;
 @property(nonatomic) BOOL navModelVisible;
@@ -155,7 +188,11 @@ static UIView *ERPFocusedView(UIView *view) {
     NSString *contentScript=[NSString stringWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"content-experience" withExtension:@"js"] encoding:NSUTF8StringEncoding error:nil];
     NSAssert(contentScript!=nil,@"Missing content-experience.js");
     [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:ERPInjectedScript(contentScript) injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
-    self.web = [[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration];
+    Class webClass=WKWebView.class;
+#if ERP_TESTING
+    if(ERPUsesSimulatorFixtures())webClass=ERPVerificationWebView.class;
+#endif
+    self.web = [[webClass alloc] initWithFrame:CGRectZero configuration:configuration];
     self.web.navigationDelegate = self;
     self.web.UIDelegate = self;
     // Website cards use horizontal drags. Native history gestures must not
@@ -199,7 +236,7 @@ static UIView *ERPFocusedView(UIView *view) {
         [weakSelf haptic:@"selection"];
         [weakSelf.web evaluateJavaScript:[NSString stringWithFormat:@"window.__vrcrpActivateTab?.(%ld)",(long)slot] completionHandler:^(id result,NSError *error){if(error||![result isEqual:@YES])[weakSelf.bottomNav cancelPendingSelection];}];
     };
-    self.edgeBack=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(edgeBack:)];
+    self.edgeBack=[[VRBackPanGestureRecognizer alloc] initWithTarget:self action:@selector(edgeBack:)];
     self.edgeBack.maximumNumberOfTouches=1; self.edgeBack.delegate=self; self.edgeBack.enabled=NO;
     [self.view addGestureRecognizer:self.edgeBack];
     self.pullRefresh=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(pullToRefresh:)];self.pullRefresh.delegate=self;self.pullRefresh.maximumNumberOfTouches=1;self.pullRefresh.cancelsTouchesInView=NO;self.pullRefresh.enabled=NO;[self.view addGestureRecognizer:self.pullRefresh];
@@ -226,6 +263,8 @@ static UIView *ERPFocusedView(UIView *view) {
         [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:18765/matches"]]];
     } else if ([arguments containsObject:@"--verify-handoff"]) {
         [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:18765/matches?fixture=handoff"]]];
+    } else if ([arguments containsObject:@"--verify-gestures"]) {
+        [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:18765/matches?fixture=gestures"]]];
     } else if ([arguments containsObject:@"--verify-surfaces"]) {
         [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:18765/me?fixture=surfaces"]]];
     } else if ([arguments containsObject:@"--preview-login"]) {
@@ -353,13 +392,14 @@ static UIView *ERPFocusedView(UIView *view) {
 - (void)updateBackAvailability {
     // Focus/keyboard notifications must not cancel an active back recognizer.
     if(self.edgeBack.state!=UIGestureRecognizerStateBegan&&self.edgeBack.state!=UIGestureRecognizerStateChanged)
-        self.edgeBack.enabled=(self.canGoBack||self.profileOverlay)&&(!self.websiteOverlay||self.profileOverlay)&&!self.textSelected;
+        self.edgeBack.enabled=(self.canGoBack||self.profileOverlay)&&(!self.websiteOverlay||self.profileOverlay);
     self.pullRefresh.enabled=self.refreshable&&!self.websiteOverlay&&!self.profileOverlay&&!self.keyboardVisible&&!self.textSelected&&!self.refreshing;
 }
 - (BOOL)canStartBackAtPoint:(CGPoint)point velocity:(CGPoint)velocity {
-    if((!self.canGoBack&&!self.profileOverlay)||self.textSelected||(self.websiteOverlay&&!self.profileOverlay)||self.presentedViewController||self.pageNavigation.interactive||velocity.x<=fabs(velocity.y)*1.15)return NO;
+    if((!self.canGoBack&&!self.profileOverlay)||(self.websiteOverlay&&!self.profileOverlay)||self.presentedViewController||self.pageNavigation.interactive||velocity.x<=fabs(velocity.y)*1.15)return NO;
     if(!CGRectContainsPoint(self.web.bounds,point))return NO;
     if(point.x<=24)return YES;
+    for(id zone in self.selectionZones)if(CGRectContainsPoint(VRRect(zone),point))return NO;
     for(id zone in self.horizontalZones)if(CGRectContainsPoint(VRRect(zone),point))return NO;
     return YES;
 }
@@ -368,13 +408,16 @@ static UIView *ERPFocusedView(UIView *view) {
     return gesture!=self.edgeBack||[self canStartBackAtPoint:[gesture locationInView:self.web] velocity:[self.edgeBack velocityInView:self.view]];
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
-    return ((gesture==self.edgeBack||gesture==self.pullRefresh)&&other==self.web.scrollView.panGestureRecognizer)||((other==self.edgeBack||other==self.pullRefresh)&&gesture==self.web.scrollView.panGestureRecognizer);
+    UIGestureRecognizer *nested=gesture==self.edgeBack||gesture==self.pullRefresh?other:gesture;
+    return ((gesture==self.edgeBack||gesture==self.pullRefresh)||(other==self.edgeBack||other==self.pullRefresh))&&
+        [nested isKindOfClass:UIPanGestureRecognizer.class]&&[nested.view isDescendantOfView:self.web];
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)other {
     // WebKit contains additional pans for nested message/post scrollers. They
     // wait for our directional decision; vertical and protected-content pans
     // proceed as soon as shouldBegin rejects back. Do not change their delegates.
-    return gesture==self.edgeBack&&[other isKindOfClass:UIPanGestureRecognizer.class]&&[other.view isDescendantOfView:self.web];
+    return gesture==self.edgeBack&&[other.view isKindOfClass:UIScrollView.class]&&
+        other==((UIScrollView *)other.view).panGestureRecognizer&&[other.view isDescendantOfView:self.web];
 }
 - (void)edgeBack:(UIPanGestureRecognizer *)gesture {
     CGFloat distance=MAX(0,[gesture translationInView:self.view].x);
@@ -450,6 +493,7 @@ static UIView *ERPFocusedView(UIView *view) {
         [NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"] ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--verify-navigation"] ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--verify-handoff"] ||
+        [NSProcessInfo.processInfo.arguments containsObject:@"--verify-gestures"] ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--preview-login"]) return;
 #endif
     if(self.askedForNotifications)return; self.askedForNotifications=YES;
@@ -475,6 +519,11 @@ static UIView *ERPFocusedView(UIView *view) {
     NSDictionary *body = message.body;
     if ([message.name isEqualToString:@"erpNativeApp"]) {
         NSString *kind=body[@"kind"];
+#if ERP_TESTING
+        if([kind isEqual:@"verifySnapshotStall"]&&[self.web isKindOfClass:ERPVerificationWebView.class]){
+            ((ERPVerificationWebView *)self.web).stallSnapshot=YES;return;
+        }
+#endif
         NSString *owner=body[@"entryKey"];
         if([owner isKindOfClass:NSString.class]&&self.pageNavigation.currentKey.length&&
            ![kind isEqual:@"route"]&&![kind isEqual:@"willNavigate"]&&
@@ -506,7 +555,9 @@ static UIView *ERPFocusedView(UIView *view) {
         } else if ([kind isEqual:@"gestureZones"]) {
             if([body[@"zones"] isKindOfClass:NSArray.class]&&[body[@"zones"] count]<=100)self.horizontalZones=body[@"zones"];
         } else if ([kind isEqual:@"selection"]) {
-            self.textSelected=[body[@"selected"] isEqual:@YES];[self updateBackAvailability];
+            self.textSelected=[body[@"selected"] isEqual:@YES];
+            self.selectionZones=self.textSelected&&[body[@"zones"] isKindOfClass:NSArray.class]&&[body[@"zones"] count]<=100?body[@"zones"]:@[];
+            [self updateBackAvailability];
         } else if ([kind isEqualToString:@"topSurface"]) {
             UIColor *color=VRColor(body[@"color"],self.statusBarSurface.backgroundColor);
             CGFloat red=1,green=1,blue=1,alpha=1; [color getRed:&red green:&green blue:&blue alpha:&alpha];
@@ -534,7 +585,7 @@ static UIView *ERPFocusedView(UIView *view) {
             NSString *path=body[@"path"];
             if (![path isKindOfClass:NSString.class] || ![path hasPrefix:@"/"] || path.length>500) return;
             if(![body[@"entryKey"] isEqual:self.pageNavigation.currentKey]) {
-                self.horizontalZones=@[];self.textSelected=NO;self.websiteOverlay=NO;self.profileOverlay=NO;
+                self.horizontalZones=@[];self.selectionZones=@[];self.textSelected=NO;self.websiteOverlay=NO;self.profileOverlay=NO;
             }
             self.routeShowsTabs=[body[@"showTabs"] isEqual:@YES];if(!self.routeShowsTabs)self.bottomNav.hidden=YES;
             self.chatNotifications.activePath=path;

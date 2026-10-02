@@ -1,0 +1,43 @@
+name: ERPStable
+options:
+  deploymentTarget:
+    iOS: '15.0'
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: local.erp.stable
+    SWIFT_VERSION: '5.0'
+targets:
+  ERPStable:
+    type: application
+    platform: iOS
+    sources:
+      - path: ERPStable
+        includes: ['*.m', '*.h']
+      - path: ERPStable
+        includes: ['*.js', '*.png', '*.storyboard']
+        buildPhase: resources
+    settings:
+      base:
+        INFOPLIST_FILE: ERPStable/Info.plist
+        TARGETED_DEVICE_FAMILY: '1,2'
+      configs:
+        Debug:
+          GCC_PREPROCESSOR_DEFINITIONS: ['$(inherited)', 'ERP_TESTING=1']
+  GestureChecks:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [scripts/GestureChecks]
+    dependencies:
+      - target: ERPStable
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: local.erp.stable.GestureChecks
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  GestureChecks:
+    build:
+      targets:
+        ERPStable: all
+        GestureChecks: [test]
+    test:
+      targets: [GestureChecks]
