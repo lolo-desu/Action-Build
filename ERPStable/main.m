@@ -730,9 +730,10 @@ static UIView *ERPFocusedView(UIView *view) {
     CGRect hint=[self.refreshHint convertRect:self.refreshHint.bounds toView:self.view];
     NSMutableDictionary *data=[@{@"keyboard":@(self.keyboardVisible),@"backEnabled":@(self.edgeBack.enabled),@"edgeBackAllowed":@([self canStartBackAtPoint:CGPointMake(12,180) velocity:CGPointMake(700,0)]),@"headerHeight":@(self.pageHeaderHeight),@"hintTop":@(hint.origin.y-self.web.frame.origin.y),@"hintVisible":@(!self.refreshHint.hidden&&!self.refreshSurface.hidden),@"hintText":self.refreshLabel.text?:@"",@"bounce":@(self.web.scrollView.bounces),@"surfaceColor":@[@(r),@(g),@(b),@(a)],@"documentLoads":@(self.documentLoads),@"overlay":@(self.profileOverlay),@"interactive":@(self.pageNavigation.interactive),@"transitioning":@(self.pageNavigation.transitioning),@"translation":@(self.web.transform.tx)} mutableCopy];
     if([self.presentedViewController isKindOfClass:ExternalBrowser.class])data[@"external"]=[(ExternalBrowser *)self.presentedViewController verifyState];
-    if([@[@"chat",@"pull",@"dark-pull",@"light-pull",@"external-a"] containsObject:phase]) {
-        UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithBounds:self.view.window.bounds];
-        UIImage *image=[renderer imageWithActions:^(UIGraphicsImageRendererContext *context){[self.view.window drawViewHierarchyInRect:self.view.window.bounds afterScreenUpdates:NO];}];
+    UIWindow *visibleWindow=self.presentedViewController.view.window?:self.view.window;
+    if(visibleWindow&&[@[@"chat",@"pull",@"dark-pull",@"light-pull",@"external-a"] containsObject:phase]) {
+        UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithBounds:visibleWindow.bounds];
+        UIImage *image=[renderer imageWithActions:^(UIGraphicsImageRendererContext *context){[visibleWindow drawViewHierarchyInRect:visibleWindow.bounds afterScreenUpdates:NO];}];
         NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         [UIImagePNGRepresentation(image) writeToURL:[directory URLByAppendingPathComponent:[NSString stringWithFormat:@"surfaces-%@.png",phase]] atomically:YES];
     }
