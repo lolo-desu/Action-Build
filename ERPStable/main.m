@@ -710,13 +710,13 @@ static UIView *ERPFocusedView(UIView *view) {
 - (void)verifyUXSequence {
     NSDictionary *(^step)(NSString *,NSString *,dispatch_block_t,BOOL(^)(void))=^(NSString *phase,NSString *condition,dispatch_block_t action,BOOL(^native)(void)){return @{@"phase":phase,@"condition":condition,@"action":[action copy],@"native":[native copy]};};
     NSArray *steps=@[
-        step(@"discover",@"location.pathname==='/discover'",^{},^{return !self.pageNavigation.transitioning&&self.pageNavigation.currentKey.length>0;}),
-        step(@"",@"location.pathname==='/matches/thread'&&!!document.querySelector('textarea')",^{[self verifyJavaScript:@"__fixtureOpen('/matches/thread')"];},^{return !self.pageNavigation.transitioning;}),
-        step(@"chat",@"document.activeElement===document.querySelector('textarea')",^{[self verifyJavaScript:@"document.querySelector('textarea').focus()"];},^{return self.keyboardVisible&&!self.pageNavigation.transitioning;}),
-        step(@"profile",@"location.pathname==='/u/peer'",^{[self verifyJavaScript:@"document.activeElement.blur();__fixtureOpen('/u/peer')"];},^{return !self.keyboardVisible&&!self.pageNavigation.transitioning;}),
-        step(@"chat-return",@"location.pathname==='/matches/thread'",^{[self verifyJavaScript:@"__vrcrpBack()"];},^{return !self.pageNavigation.transitioning;}),
-        step(@"restored",@"location.pathname==='/discover'",^{[self verifyJavaScript:@"__vrcrpBack()"];},^{return !self.pageNavigation.transitioning&&!self.bottomNav.hidden;}),
-        step(@"dark",@"getComputedStyle(document.querySelector('.app-top')).backgroundColor==='rgb(24, 28, 35)'",^{[self verifyJavaScript:@"__fixtureDark()"];},^{return [self verifyHeaderRed:24.0/255];})
+        step(@"discover",@"location.pathname==='/discover'",^{},^BOOL(void){return !self.pageNavigation.transitioning&&self.pageNavigation.currentKey.length>0;}),
+        step(@"",@"location.pathname==='/matches/thread'&&!!document.querySelector('textarea')",^{[self verifyJavaScript:@"__fixtureOpen('/matches/thread')"];},^BOOL(void){return !self.pageNavigation.transitioning;}),
+        step(@"chat",@"document.activeElement===document.querySelector('textarea')",^{[self verifyJavaScript:@"document.querySelector('textarea').focus()"];},^BOOL(void){return self.keyboardVisible&&!self.pageNavigation.transitioning;}),
+        step(@"profile",@"location.pathname==='/u/peer'",^{[self verifyJavaScript:@"document.activeElement.blur();__fixtureOpen('/u/peer')"];},^BOOL(void){return !self.keyboardVisible&&!self.pageNavigation.transitioning;}),
+        step(@"chat-return",@"location.pathname==='/matches/thread'",^{[self verifyJavaScript:@"__vrcrpBack()"];},^BOOL(void){return !self.pageNavigation.transitioning;}),
+        step(@"restored",@"location.pathname==='/discover'",^{[self verifyJavaScript:@"__vrcrpBack()"];},^BOOL(void){return !self.pageNavigation.transitioning&&!self.bottomNav.hidden;}),
+        step(@"dark",@"getComputedStyle(document.querySelector('.app-top')).backgroundColor==='rgb(24, 28, 35)'",^{[self verifyJavaScript:@"__fixtureDark()"];},^BOOL(void){return [self verifyHeaderRed:24.0/255];})
     ];[self runVerifySteps:steps index:0 deadline:0];
 }
 - (BOOL)verifyExternalPath:(NSString *)path back:(BOOL)back forward:(BOOL)forward {
@@ -726,34 +726,34 @@ static UIView *ERPFocusedView(UIView *view) {
 }
 - (void)verifySurfaces {
     NSDictionary *(^step)(NSString *,NSString *,dispatch_block_t,BOOL(^)(void))=^(NSString *phase,NSString *condition,dispatch_block_t action,BOOL(^native)(void)){return @{@"phase":phase,@"condition":condition,@"action":[action copy],@"native":[native copy]};};
-    BOOL(^settled)(void)=^{return !self.pageNavigation.transitioning;};
+    BOOL(^settled)(void)=^BOOL(void){return !self.pageNavigation.transitioning;};
     NSArray *steps=@[
-        step(@"",@"!!window.__surfaceOpen",^{},^{return self.pageNavigation.canPreviewOverlay;}),
+        step(@"",@"!!window.__surfaceOpen",^{},^BOOL(void){return self.pageNavigation.canPreviewOverlay;}),
         step(@"edit-entry",@"location.pathname==='/profile/edit/basics'&&!!document.querySelector('[data-vrcrp-page-back]')",^{[self verifyJavaScript:@"__surfaceOpen('/profile/edit/basics')"];},settled),
-        step(@"edit-keyboard",@"document.activeElement===document.querySelector('textarea')",^{[self verifyJavaScript:@"document.querySelector('textarea').focus()"];},^{return self.keyboardVisible;}),
+        step(@"edit-keyboard",@"document.activeElement===document.querySelector('textarea')",^{[self verifyJavaScript:@"document.querySelector('textarea').focus()"];},^BOOL(void){return self.keyboardVisible;}),
         step(@"edit-tabs",@"location.pathname==='/profile/edit/photos'&&!!document.querySelector('[data-vrcrp-page-back]')",^{[self verifyJavaScript:@"__surfaceOpen('/profile/edit/about');__surfaceOpen('/profile/edit/photos')"];},settled),
-        step(@"edit-return",@"location.pathname==='/me'",^{[self verifyJavaScript:@"__vrcrpPageBack()"];},^{return !self.keyboardVisible&&!self.pageNavigation.transitioning;}),
+        step(@"edit-return",@"location.pathname==='/me'",^{[self verifyJavaScript:@"__vrcrpPageBack()"];},^BOOL(void){return !self.keyboardVisible&&!self.pageNavigation.transitioning;}),
         step(@"chat",@"location.pathname==='/matches/thread'&&document.querySelector('[data-vrcrp-unread]')?.textContent==='7'",^{[self verifyJavaScript:@"__surfaceOpen('/matches/thread');__vrcrpChatUnread(7)"];},settled),
         step(@"profile",@"location.pathname==='/u/peer'&&!!document.querySelector('[data-vrcrp-page-back]')",^{[self verifyJavaScript:@"__surfaceOpen('/u/peer')"];},settled),
         step(@"profile-return",@"location.pathname==='/matches/thread'",^{[self verifyJavaScript:@"__vrcrpPageBack()"];},settled),
         step(@"",@"location.pathname==='/me'",^{[self verifyJavaScript:@"__vrcrpPageBack()"];},settled),
         step(@"",@"location.pathname==='/matches'",^{[self verifyJavaScript:@"__surfaceOpen('/matches')"];},settled),
-        step(@"pull",@"document.getElementById('main').hasAttribute('data-vrcrp-pulling')",^{[self showPullDistance:100];},^{return !self.refreshHint.hidden;}),
-        step(@"refreshed",@"window.fixtureRefreshes>=1&&!document.getElementById('main').hasAttribute('data-vrcrp-pulling')",^{[self refreshPage:nil];},^{return !self.refreshing&&self.refreshHint.hidden;}),
-        step(@"",@"location.pathname==='/discover'",^{[self verifyJavaScript:@"__surfaceOpen('/discover')"];},^{return !self.pageNavigation.transitioning&&self.pageNavigation.canPreviewOverlay;}),
-        step(@"",@"!!document.querySelector('[data-vrcrp-profile-overlay]')",^{[self verifyJavaScript:@"__surfaceOverlay()"];},^{return self.profileOverlay;}),
-        step(@"overlay-preview",@"!!document.querySelector('[data-vrcrp-profile-overlay]')",^{[self.pageNavigation beginOverlayInteractive];[self.pageNavigation updateInteractive:self.web.bounds.size.width*.4];},^{return self.profileOverlay&&self.pageNavigation.interactive;}),
+        step(@"pull",@"document.getElementById('main').hasAttribute('data-vrcrp-pulling')",^{[self showPullDistance:100];},^BOOL(void){return !self.refreshHint.hidden;}),
+        step(@"refreshed",@"window.fixtureRefreshes>=1&&!document.getElementById('main').hasAttribute('data-vrcrp-pulling')",^{[self refreshPage:nil];},^BOOL(void){return !self.refreshing&&self.refreshHint.hidden;}),
+        step(@"",@"location.pathname==='/discover'",^{[self verifyJavaScript:@"__surfaceOpen('/discover')"];},^BOOL(void){return !self.pageNavigation.transitioning&&self.pageNavigation.canPreviewOverlay;}),
+        step(@"",@"!!document.querySelector('[data-vrcrp-profile-overlay]')",^{[self verifyJavaScript:@"__surfaceOverlay()"];},^BOOL(void){return self.profileOverlay;}),
+        step(@"overlay-preview",@"!!document.querySelector('[data-vrcrp-profile-overlay]')",^{[self.pageNavigation beginOverlayInteractive];[self.pageNavigation updateInteractive:self.web.bounds.size.width*.4];},^BOOL(void){return self.profileOverlay&&self.pageNavigation.interactive;}),
         step(@"overlay-cancelled",@"!!document.querySelector('[data-vrcrp-profile-overlay]')",^{[self.pageNavigation finishInteractive:self.web.bounds.size.width*.4 velocity:-500 cancelled:NO];},settled),
-        step(@"overlay-return",@"!document.querySelector('[data-vrcrp-profile-overlay]')",^{[self.pageNavigation beginOverlayInteractive];[self.pageNavigation updateInteractive:self.web.bounds.size.width*.55];[self.pageNavigation finishInteractive:self.web.bounds.size.width*.55 velocity:800 cancelled:NO];},^{return !self.profileOverlay&&!self.pageNavigation.transitioning;}),
-        step(@"external-a",@"true",^{[self verifyJavaScript:@"location.href='http://localhost:18765/external/a'"];},^{return [self verifyExternalPath:@"/external/a" back:NO forward:NO];}),
-        step(@"external-b",@"true",^{[(ExternalBrowser *)self.presentedViewController verifyOpenNext];},^{return [self verifyExternalPath:@"/external/b" back:YES forward:NO];}),
-        step(@"external-back",@"true",^{[(ExternalBrowser *)self.presentedViewController back:nil];},^{return [self verifyExternalPath:@"/external/a" back:NO forward:YES];}),
-        step(@"external-forward",@"true",^{[(ExternalBrowser *)self.presentedViewController forward:nil];},^{return [self verifyExternalPath:@"/external/b" back:YES forward:NO];}),
-        step(@"",@"true",^{[(ExternalBrowser *)self.presentedViewController close:nil];},^{return !self.presentedViewController&&self.view.window;}),
-        step(@"",@"location.pathname==='/matches'",^{[self verifyJavaScript:@"__surfaceOpen('/matches');document.documentElement.style.setProperty('--surface','24 28 35')"];},^{return [self verifyHeaderRed:24.0/255];}),
-        step(@"dark-pull",@"document.getElementById('main').hasAttribute('data-vrcrp-pulling')",^{[self showPullDistance:100];},^{return [self verifyHeaderRed:24.0/255]&&!self.refreshHint.hidden;}),
-        step(@"",@"getComputedStyle(document.querySelector('.app-top')).backgroundColor==='rgb(255, 255, 255)'",^{[self showPullDistance:0];[self verifyJavaScript:@"document.documentElement.style.setProperty('--surface','255 255 255')"];},^{return [self verifyHeaderRed:1];}),
-        step(@"light-pull",@"document.getElementById('main').hasAttribute('data-vrcrp-pulling')",^{[self showPullDistance:100];},^{return [self verifyHeaderRed:1]&&!self.refreshHint.hidden;}),
+        step(@"overlay-return",@"!document.querySelector('[data-vrcrp-profile-overlay]')",^{[self.pageNavigation beginOverlayInteractive];[self.pageNavigation updateInteractive:self.web.bounds.size.width*.55];[self.pageNavigation finishInteractive:self.web.bounds.size.width*.55 velocity:800 cancelled:NO];},^BOOL(void){return !self.profileOverlay&&!self.pageNavigation.transitioning;}),
+        step(@"external-a",@"true",^{[self verifyJavaScript:@"location.href='http://localhost:18765/external/a'"];},^BOOL(void){return [self verifyExternalPath:@"/external/a" back:NO forward:NO];}),
+        step(@"external-b",@"true",^{[(ExternalBrowser *)self.presentedViewController verifyOpenNext];},^BOOL(void){return [self verifyExternalPath:@"/external/b" back:YES forward:NO];}),
+        step(@"external-back",@"true",^{[(ExternalBrowser *)self.presentedViewController back:nil];},^BOOL(void){return [self verifyExternalPath:@"/external/a" back:NO forward:YES];}),
+        step(@"external-forward",@"true",^{[(ExternalBrowser *)self.presentedViewController forward:nil];},^BOOL(void){return [self verifyExternalPath:@"/external/b" back:YES forward:NO];}),
+        step(@"",@"true",^{[(ExternalBrowser *)self.presentedViewController close:nil];},^BOOL(void){return !self.presentedViewController&&self.view.window;}),
+        step(@"",@"location.pathname==='/matches'",^{[self verifyJavaScript:@"__surfaceOpen('/matches');document.documentElement.style.setProperty('--surface','24 28 35')"];},^BOOL(void){return [self verifyHeaderRed:24.0/255];}),
+        step(@"dark-pull",@"document.getElementById('main').hasAttribute('data-vrcrp-pulling')",^{[self showPullDistance:100];},^BOOL(void){return [self verifyHeaderRed:24.0/255]&&!self.refreshHint.hidden;}),
+        step(@"",@"getComputedStyle(document.querySelector('.app-top')).backgroundColor==='rgb(255, 255, 255)'",^{[self showPullDistance:0];[self verifyJavaScript:@"document.documentElement.style.setProperty('--surface','255 255 255')"];},^BOOL(void){return [self verifyHeaderRed:1];}),
+        step(@"light-pull",@"document.getElementById('main').hasAttribute('data-vrcrp-pulling')",^{[self showPullDistance:100];},^BOOL(void){return [self verifyHeaderRed:1]&&!self.refreshHint.hidden;}),
         step(@"completed",@"location.pathname==='/discover'",^{[self showPullDistance:0];[self verifyJavaScript:@"__surfaceOpen('/discover')"];},settled)
     ];[self runVerifySteps:steps index:0 deadline:0];
 }
