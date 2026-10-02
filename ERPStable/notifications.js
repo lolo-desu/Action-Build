@@ -52,7 +52,7 @@
     window.__vrcrpSiteCache?.session(userId, requestHeaders);
     post({ kind: 'session', userId, mode: requestHeaders['X-Content-Mode'], language: requestHeaders['Accept-Language'] || navigator.language || 'en', userAgent: navigator.userAgent });
   }
-  function snapshot(value) {
+  function snapshot(value, state = 'active', firstPage = true) {
     if (!userId || !Array.isArray(value?.items)) return;
     const summaries = [];
     for (const item of value.items.slice(0,200)) {
@@ -67,8 +67,8 @@
       summaries.push({ matchId: id, title, messageId: latest?.id || '', unread: item.unreadCount || 0 });
     }
     post({ kind: 'snapshot', items: summaries });
-    window.__vrcrpSiteCache?.commitMatches(value);
-    window.__vrcrpSiteCache?.warmList(value);
+    if (firstPage) window.__vrcrpSiteCache?.commitMatches(value, state);
+    if (firstPage && state === 'active') window.__vrcrpSiteCache?.warmList(value);
   }
   window.__vrcrpDispatchServerEvent = (type,data) => {
     if (!socket) return false;
@@ -143,7 +143,7 @@
         const value = unwrap(data);
         if (url.pathname === '/api/v1/me') session(value);
         else if (url.pathname.endsWith('/counters')) counters(value);
-        else snapshot(value);
+        else snapshot(value, url.searchParams.get('state') || 'active', !url.searchParams.has('cursor'));
       }).catch(()=>{});
     }).catch(()=>{});
     return result;

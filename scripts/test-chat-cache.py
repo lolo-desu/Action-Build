@@ -23,7 +23,7 @@ with sync_playwright() as p:
    if url.path.endswith('/me/counters'):value={'unreadMessages':server['active']['items'][0]['unreadCount']}
    elif url.path.endswith('/me'):value={'id':'self'}
    elif url.path.endswith('/messages'):value=server['messages']
-   elif url.path.endswith('/matches'):value=server[q.get('state',['active'])[0]]
+   elif url.path.endswith('/matches'):value=server.get('older',server['active']) if q.get('cursor') else server[q.get('state',['active'])[0]]
    else:value={'id':url.path.rsplit('/',1)[-1],'user':{'displayName':'测试联系人'},'state':'active'}
    route.fulfill(body=json.dumps(value),content_type='application/json')
   elif url.path.endswith('index-test.js'):route.fulfill(body=bundle.read_text(),content_type='text/javascript')
@@ -35,6 +35,7 @@ with sync_playwright() as p:
  page.evaluate('__vrcrpSyncChats()');page.wait_for_function("document.querySelector('.unread').textContent==='5' && document.querySelector('.preview').textContent==='已更新状态'")
  assert page.evaluate("fixtureClient.getQueryData(['m','sfw','zh','matches','active']).pages[0].items[0].unreadCount")==5
  page.click('.closed-tab');page.wait_for_selector('a[href="/matches/closed"]')
+ assert page.evaluate("fixtureClient.getQueryData(['m','sfw','zh','matches','active']).pages[0].items.map(m=>m.id)")==['thread'],'closed responses overwrote active cache'
  server['unmatched']['items'][0]['user']['displayName']='结束状态已更新'
  page.evaluate('__vrcrpSyncChats()');page.wait_for_function("document.querySelector('a[href=\"/matches/closed\"]').textContent.includes('结束状态已更新')")
  page.click('.active-tab');page.wait_for_selector('a[href="/matches/thread"]');page.click('a[href="/matches/thread"]')
@@ -51,9 +52,16 @@ with sync_playwright() as p:
  page.evaluate('__vrcrpSiteCache.refreshChat()');page.wait_for_selector('[data-id="new-real"]')
  assert page.locator('[data-id="old"]').count()==1
  assert not any(method!='GET' for _,_,method in requests),'cache/prefetch wrote server state'
+ # A cursor response must keep the first page rather than replace it.
+ page.evaluate('__vrcrpBack()');page.wait_for_selector('.more')
+ server['active']['nextCursor']='older'
+ server['older']={'items':[{'id':'older-thread','user':{'displayName':'更早的联系人'},'unreadCount':0}],'nextCursor':None}
+ page.evaluate('__vrcrpSyncChats()');page.wait_for_function("fixtureClient.getQueryData(['m','sfw','zh','matches','active']).pages[0].nextCursor==='older'")
+ page.click('.more');page.wait_for_selector('a[href="/matches/older-thread"]')
+ assert page.evaluate("fixtureClient.getQueryData(['m','sfw','zh','matches','active']).pages.map(p=>p.items.map(m=>m.id))")==[['thread'],['older-thread']],'cursor response replaced page one'
  # A new account cannot consume the previous user's warm responses.
  page.evaluate("__vrcrpSiteCache.session('other',{'X-Content-Mode':'sfw','Accept-Language':'zh'})")
  server['offline']=True
  assert page.evaluate("fetch('/api/v1/matches/thread/messages?limit=50').then(()=>false,()=>true)")
  browser.close()
-print('PASS: real React/TanStack cache updates without WS; active/closed state; warm chat offline; draft restoration; real-message background merge; no reload/server writes/account cache reuse')
+print('PASS: real React/TanStack cache updates without WS; active/closed isolation and pagination; warm chat offline; draft restoration; real-message background merge; no reload/server writes/account cache reuse')
