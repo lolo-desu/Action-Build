@@ -371,6 +371,12 @@ static UIView *ERPFocusedView(UIView *view) {
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
     return ((gesture==self.edgeBack||gesture==self.pullRefresh)&&other==self.web.scrollView.panGestureRecognizer)||((other==self.edgeBack||other==self.pullRefresh)&&gesture==self.web.scrollView.panGestureRecognizer);
 }
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)other {
+    // WebKit contains additional pans for nested message/post scrollers. They
+    // wait for our directional decision; vertical and protected-content pans
+    // proceed as soon as shouldBegin rejects back. Do not change their delegates.
+    return gesture==self.edgeBack&&[other isKindOfClass:UIPanGestureRecognizer.class]&&[other.view isDescendantOfView:self.web];
+}
 - (void)edgeBack:(UIPanGestureRecognizer *)gesture {
     CGFloat distance=MAX(0,[gesture translationInView:self.view].x);
     if (gesture.state==UIGestureRecognizerStateBegan) {

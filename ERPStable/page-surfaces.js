@@ -4,7 +4,7 @@
   // The site already has an installed-app branch. Use that branch rather than
   // removing arbitrary translated text or intercepting its installation flow.
   try { Object.defineProperty(navigator,'standalone',{get:()=>true,configurable:true}); } catch {}
-  const post=value=>{try{window.webkit?.messageHandlers?.erpNativeApp?.postMessage(value);}catch{}};
+  const post=value=>{try{window.webkit?.messageHandlers?.erpNativeApp?.postMessage({...value,entryKey:window.__vrcrpEntryKey?.()||history.state?.key});}catch{}};
   const editing=()=>/^\/profile\/edit(?:\/|$)/.test(location.pathname);
   const chat=()=>/^\/matches\/[^/]+\/?$/.test(location.pathname);
   let unread=0,queued=false,overlay=null,lastOverlay=false,lastHeader='';

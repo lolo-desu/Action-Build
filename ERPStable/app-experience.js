@@ -144,7 +144,7 @@
   }
   document.addEventListener('scroll',scheduleGestureZones,{capture:true,passive:true});
   document.addEventListener('pointerdown',updateGestureZones,{capture:true,passive:true});
-  document.addEventListener('selectionchange',()=>post({kind:'selection',selected:!getSelection()?.isCollapsed}));
+  document.addEventListener('selectionchange',()=>post({kind:'selection',entryKey:entryKey(),selected:!getSelection()?.isCollapsed}));
   const icons = new Map();
   function rasterIcon(svg, color) {
     let source = svg.outerHTML.replace(/currentColor/g, color);
@@ -181,6 +181,7 @@
   let backQueue=0,backInFlight=false,backTimer=null,forwardIntent=null;
   let baseIndex = Number.isInteger(history.state?.idx) ? history.state.idx : 0;
   const entryKey = () => String(entryKeys[index] || 'vr-' + index);
+  window.__vrcrpEntryKey=entryKey;
   function saveView() {
     const main = document.getElementById('main'); if (!main) return;
     const chat = /^\/matches\/[^/]+$/.test(lastPath), editor = chat ? main.querySelector('textarea') : null;
