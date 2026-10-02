@@ -4,7 +4,7 @@
   let viewport = null;
   let scheduled = false;
   let messages = null, messageState = null;
-  let resizePolicy=null,resizeTimer=null,resizeGeneration=0;
+  let resizePolicy=null,resizeTimer=null,resizeGeneration=0,resizeStarted=0;
   const resizeObserver = new ResizeObserver(() => update());
   function messagePane() {
     if (!/^\/matches\/[^/]+\/?$/.test(location.pathname)) return null;
@@ -35,11 +35,19 @@
       rememberMessages(); if(moved)messages.dispatchEvent(new Event('scroll'));
     } else rememberMessages();
   }
-  function endResize(owner=resizeGeneration){if(owner!==resizeGeneration)return;update();resizePolicy=null;clearTimeout(resizeTimer);rememberMessages();}
+  function endResize(owner=resizeGeneration){
+    if(owner!==resizeGeneration)return;update();clearTimeout(resizeTimer);
+    // UIKit can finish its animation before WebKit publishes the new viewport.
+    // Keep the reading intent through that delayed reflow instead of treating
+    // the clamped scroll position as an intentional move away from the bottom.
+    const actual=window.visualViewport?.height??innerHeight;
+    if(viewport&&Math.abs(actual-viewport.height)>1&&performance.now()-resizeStarted<5000){resizeTimer=setTimeout(()=>endResize(owner),50);return;}
+    resizePolicy=null;rememberMessages();
+  }
   function beginResize(){
     observeMessages();if(!messageState)return;
     if(!resizePolicy)resizePolicy={...messageState};
-    const owner=++resizeGeneration;clearTimeout(resizeTimer);
+    const owner=++resizeGeneration;resizeStarted=performance.now();clearTimeout(resizeTimer);
     // Hardware keyboards may never produce a native frame change.
     resizeTimer=setTimeout(()=>endResize(owner),1200);
   }
@@ -111,6 +119,7 @@
   document.addEventListener('pointerdown',event=>{if(messages?.contains(event.target)&&resizePolicy){resizePolicy=null;clearTimeout(resizeTimer);resizeGeneration++;rememberMessages();}},{capture:true,passive:true});
   document.addEventListener('focusin', schedule);
   window.addEventListener('resize', schedule);
+  window.visualViewport?.addEventListener('resize',schedule);
   window.addEventListener('popstate', schedule);
   new MutationObserver(schedule).observe(document, { childList: true, subtree: true });
   schedule();

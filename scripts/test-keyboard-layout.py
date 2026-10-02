@@ -67,6 +67,17 @@ with sync_playwright() as p:
         assert metrics["gap"]<2 and metrics["last"]<=metrics["paneBottom"]+1,metrics
         page.evaluate('__vrcrpDidResizeViewport()')
         page.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))')
+    # A delayed WebKit viewport must retain bottom reading intent after the
+    # UIKit animation has finished, including a late automatic focus scroll.
+    page.set_viewport_size({'width':393,'height':793})
+    page.evaluate('__vrcrpSetViewport({width:393,height:793,keyboardVisible:false})')
+    page.evaluate('__vrcrpWillResizeViewport();__vrcrpSetViewport({width:393,height:434,keyboardVisible:true});__vrcrpDidResizeViewport()')
+    page.wait_for_timeout(1500)
+    page.locator('.messages').evaluate("e=>{e.scrollTop-=120;e.dispatchEvent(new Event('scroll'))}")
+    assert page.locator('.messages').evaluate('e=>e.scrollHeight-e.scrollTop-e.clientHeight')<2,'delayed WebKit focus scroll lost bottom reading intent'
+    page.set_viewport_size({'width':393,'height':434})
+    page.evaluate('__vrcrpSetViewport({width:393,height:434,keyboardVisible:true});__vrcrpDidResizeViewport()')
+    page.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))')
     # Browsing older messages must preserve its position when the pane resizes.
     page.locator('.messages').evaluate("e=>{e.scrollTop=120;e.dispatchEvent(new Event('scroll'))}")
     page.evaluate('__vrcrpSetViewport({width:393,height:420,keyboardVisible:true})')

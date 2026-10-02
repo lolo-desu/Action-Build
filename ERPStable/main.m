@@ -424,7 +424,7 @@ static UIView *ERPFocusedView(UIView *view) {
     [self.web evaluateJavaScript:@"window.__vrcrpRefreshSurface?.();window.__vrcrpRefreshChrome?.();window.__vrcrpAppActive?.(true); window.__vrcrpSyncChats?.()" completionHandler:nil];
 }
 - (void)viewDidAppear:(BOOL)animated {
-    [super viewDidAppear:animated];[self syncViewport:YES];
+    [super viewDidAppear:animated];
     [self.web evaluateJavaScript:@"window.__vrcrpRefreshSurface?.();window.__vrcrpRefreshChrome?.()" completionHandler:nil];
 }
 - (void)appInactive:(NSNotification *)notification {
@@ -591,19 +591,7 @@ static UIView *ERPFocusedView(UIView *view) {
         NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         [[NSJSONSerialization dataWithJSONObject:report options:0 error:nil] writeToURL:[directory URLByAppendingPathComponent:@"notification-content.json"] atomically:YES];
     }
-    if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"]) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [self.web evaluateJavaScript:@"document.querySelector('textarea').focus()" completionHandler:nil];
-        });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [self captureLayout:@"first"]; });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [self.web evaluateJavaScript:@"document.activeElement.blur()" completionHandler:nil];
-        });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [self.web evaluateJavaScript:@"document.querySelector('textarea').focus()" completionHandler:nil];
-        });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 7 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [self captureLayout:@"reopened"]; });
-    }
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"]) [self verifyKeyboardSequence];
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-tabs"]) [self verifyTabsWhenReady:0];
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"]) [self verifySurfaces];
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--verify-ux"]) [self verifyUXSequence];
@@ -694,18 +682,30 @@ static UIView *ERPFocusedView(UIView *view) {
             NSString *phase=step[@"phase"];
             if(!phase.length){next();return;}
             if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"])[self captureSurface:phase completion:next];
+            else if([NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"])[self captureLayout:phase completion:next];
             else[self captureUX:phase completion:next];
             return;
         }
         if(NSDate.timeIntervalSinceReferenceDate>=deadline){
             NSString *failure=[NSString stringWithFormat:@"Timed out at %@, condition %@, error %@",step[@"phase"]?:@(index),condition,error.localizedDescription?:@"none"];NSLog(@"%@",failure);
             NSDictionary *report=@{@"error":failure};
-            NSString *file=[NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"]?@"surfaces-completed.json":@"ux-dark.json";
+            NSString *file=[NSProcessInfo.processInfo.arguments containsObject:@"--verify-surfaces"]?@"surfaces-completed.json":[NSProcessInfo.processInfo.arguments containsObject:@"--verify-keyboard"]?@"layout-reopened.json":@"ux-dark.json";
             NSURL *directory=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
             [[NSJSONSerialization dataWithJSONObject:report options:0 error:nil] writeToURL:[directory URLByAppendingPathComponent:file] atomically:YES];return;
         }
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,120*NSEC_PER_MSEC),dispatch_get_main_queue(),^{[self runVerifySteps:steps index:index deadline:deadline];});
     }];
+}
+- (void)verifyKeyboardSequence {
+    NSDictionary *(^step)(NSString *,NSString *,dispatch_block_t,BOOL(^)(void))=^(NSString *phase,NSString *condition,dispatch_block_t action,BOOL(^native)(void)){return @{@"phase":phase,@"condition":condition,@"action":[action copy],@"native":[native copy]};};
+    NSString *ready=@"(() => {const p=document.querySelector('.messages'),v=parseFloat(document.documentElement.style.getPropertyValue('--vrcrp-viewport-height'));return !!p&&p.scrollHeight-p.scrollTop-p.clientHeight<2&&Math.abs(visualViewport.height-v)<1})()";
+    NSString *visible=@"(() => {const p=document.querySelector('.messages'),t=document.querySelector('textarea'),last=document.querySelector('[data-last-message]'),v=parseFloat(document.documentElement.style.getPropertyValue('--vrcrp-viewport-height'));return document.activeElement===t&&Math.abs(visualViewport.height-v)<1&&p.scrollHeight-p.scrollTop-p.clientHeight<2&&last.getBoundingClientRect().bottom<=p.getBoundingClientRect().bottom+1&&t.getBoundingClientRect().bottom<=v})()";
+    NSArray *steps=@[
+        step(@"",ready,^{},^BOOL(void){return !self.keyboardVisible;}),
+        step(@"first",visible,^{[self verifyJavaScript:@"document.querySelector('textarea').focus()"];},^BOOL(void){return self.keyboardVisible;}),
+        step(@"",ready,^{[self verifyJavaScript:@"document.activeElement.blur()"];},^BOOL(void){return !self.keyboardVisible;}),
+        step(@"reopened",visible,^{[self verifyJavaScript:@"document.querySelector('textarea').focus()"];},^BOOL(void){return self.keyboardVisible;})
+    ];[self runVerifySteps:steps index:0 deadline:0];
 }
 - (void)verifyUXSequence {
     NSDictionary *(^step)(NSString *,NSString *,dispatch_block_t,BOOL(^)(void))=^(NSString *phase,NSString *condition,dispatch_block_t action,BOOL(^native)(void)){return @{@"phase":phase,@"condition":condition,@"action":[action copy],@"native":[native copy]};};
@@ -780,6 +780,9 @@ static UIView *ERPFocusedView(UIView *view) {
     }];
 }
 - (void)captureLayout:(NSString *)phase {
+    [self captureLayout:phase completion:nil];
+}
+- (void)captureLayout:(NSString *)phase completion:(dispatch_block_t)done {
     NSString *script = @"(() => {const e=document.querySelector('textarea'); const r=e.getBoundingClientRect();return {inputTop:r.top,inputBottom:r.bottom,visualHeight:visualViewport.height,scale:visualViewport.scale,windowHeight:innerHeight,chatHeight:document.querySelector('.h-dvh').getBoundingClientRect().height,editing:document.activeElement===e,href:location.href,messageGap:(()=>{const p=document.querySelector('.messages');return p.scrollHeight-p.scrollTop-p.clientHeight})(),lastMessageBottom:document.querySelector('[data-last-message]')?.getBoundingClientRect().bottom,messagePaneBottom:document.querySelector('.messages').getBoundingClientRect().bottom};})()";
     [self.web evaluateJavaScript:script completionHandler:^(id result, NSError *error) {
         NSMutableDictionary *data = [result isKindOfClass:NSDictionary.class] ? [result mutableCopy] : [NSMutableDictionary new];
@@ -795,6 +798,7 @@ static UIView *ERPFocusedView(UIView *view) {
         NSURL *directory = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
         NSData *json = [NSJSONSerialization dataWithJSONObject:data options:NSJSONWritingPrettyPrinted error:nil];
         [json writeToURL:[directory URLByAppendingPathComponent:[NSString stringWithFormat:@"layout-%@.json", phase]] atomically:YES];
+        if(done)done();
     }];
 }
 - (void)captureTabs:(NSString *)phase {
